@@ -102,8 +102,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// split view.
     private static let cardMargin: CGFloat = 10
     private static let cardGap: CGFloat = 10
-    // Shared by every card — sidebar and the small group cards alike.
     private static let cardCornerRadius: CGFloat = 24
+    // The small group cards in the right-hand panes get their own,
+    // smaller radius rather than sharing the sidebar's.
+    private static let smallCardCornerRadius: CGFloat = 12
     // Bigger top inset than the other edges: with fullSizeContentView the
     // content area starts at the very top of the window, right where the
     // traffic-light buttons sit — a plain 10pt margin would run the
@@ -187,8 +189,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         let wrapper = NSView()
         wrapper.wantsLayer = true
         wrapper.layer?.shadowColor = NSColor.black.cgColor
-        wrapper.layer?.shadowOpacity = 0.28
-        wrapper.layer?.shadowRadius = 14
+        wrapper.layer?.shadowOpacity = 0.4
+        wrapper.layer?.shadowRadius = 24
         wrapper.layer?.shadowOffset = NSSize(width: 0, height: -3)
         // Without an explicit shadowPath, CALayer derives the shadow's
         // shape from the layer's own bounds + cornerRadius. The wrapper
@@ -325,7 +327,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         badge.lockFocus()
         let rect = NSRect(x: 0, y: 0, width: size, height: size)
         color.setFill()
-        NSBezierPath(roundedRect: rect, xRadius: size * 0.24, yRadius: size * 0.24).fill()
+        NSBezierPath(roundedRect: rect, xRadius: 12, yRadius: 12).fill()
         badge.unlockFocus()
 
         guard let symbolImage = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) else {
@@ -393,7 +395,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private func makeCard(rows: [NSView]) -> NSView {
         let box = NSBox()
         box.boxType = .custom
-        box.cornerRadius = Self.cardCornerRadius
+        box.cornerRadius = Self.smallCardCornerRadius
         box.borderWidth = 0
         // Now that the page itself is pure white, the card needs its own
         // gray fill to read as a distinct card at all — controlBackgroundColor
