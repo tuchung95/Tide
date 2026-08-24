@@ -63,6 +63,14 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private static let sidebarListInset: CGFloat = 2
     // Padding around each item's own content (icon/text) within its row.
     private static let sidebarItemPadding: CGFloat = 8
+    // Gap between a sidebar item's icon and its label text.
+    private static let sidebarIconTextGap: CGFloat = 8
+    // Padding around a pane's content, inside contentContainer.
+    private static let panePadding: CGFloat = 24
+    // Padding around a small group card's rows, inside its own box.
+    private static let smallCardPadding: CGFloat = 14
+    // Minimum gap between a row's label and its trailing control.
+    private static let rowContentGap: CGFloat = 8
 
     private var sidebarTableView: NSTableView!
     private var previouslySelectedSidebarRow: Int?
@@ -182,9 +190,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             pane.isHidden = true
             container.addSubview(pane)
             NSLayoutConstraint.activate([
-                pane.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
-                pane.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
-                pane.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -24)
+                pane.topAnchor.constraint(equalTo: container.topAnchor, constant: Self.panePadding),
+                pane.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Self.panePadding),
+                pane.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -Self.panePadding)
             ])
             panes[tab] = pane
         }
@@ -351,7 +359,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             imageView.widthAnchor.constraint(equalToConstant: 24),
             imageView.heightAnchor.constraint(equalToConstant: 24),
 
-            textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 8),
+            textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: Self.sidebarIconTextGap),
             textField.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -Self.sidebarItemPadding),
             textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
         ])
@@ -467,8 +475,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         box.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: box.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 14),
-            stack.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -14),
+            stack.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: Self.smallCardPadding),
+            stack.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -Self.smallCardPadding),
             stack.bottomAnchor.constraint(equalTo: box.bottomAnchor)
         ])
         return box
@@ -492,7 +500,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
             trailing.trailingAnchor.constraint(equalTo: row.trailingAnchor),
             trailing.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            trailing.leadingAnchor.constraint(greaterThanOrEqualTo: leading.trailingAnchor, constant: 8)
+            trailing.leadingAnchor.constraint(greaterThanOrEqualTo: leading.trailingAnchor, constant: Self.rowContentGap)
         ])
         return row
     }
