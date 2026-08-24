@@ -103,7 +103,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private static let cardMargin: CGFloat = 10
     private static let cardGap: CGFloat = 10
     // Shared by every card — sidebar and the small group cards alike.
-    private static let cardCornerRadius: CGFloat = 32
+    private static let cardCornerRadius: CGFloat = 24
     // Bigger top inset than the other edges: with fullSizeContentView the
     // content area starts at the very top of the window, right where the
     // traffic-light buttons sit — a plain 10pt margin would run the
