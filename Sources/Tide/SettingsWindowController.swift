@@ -53,6 +53,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     private let sidebarWidth: CGFloat = 180
     private let rowHeight: CGFloat = 40
+    private let sidebarRowHeight: CGFloat = 36
+    // Same value on all four sides around the nav item list, inside the
+    // sidebar card.
+    private static let sidebarPadding: CGFloat = 8
 
     private var sidebarTableView: NSTableView!
     private var panes: [Tab: NSView] = [:]
@@ -133,10 +137,17 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         root.addSubview(sidebarCard)
         root.addSubview(contentContainer)
 
+        // Height fits exactly the nav items + equal padding on all sides —
+        // not stretched down to the window's bottom edge. With only 3 items
+        // and a plain white page behind it (no longer a similar gray that
+        // hid the seam), a full-height sidebar left a large empty gray
+        // rectangle below the last item that read as broken.
+        let sidebarHeight = Self.sidebarPadding * 2 + CGFloat(Tab.allCases.count) * sidebarRowHeight
+
         NSLayoutConstraint.activate([
             sidebarCard.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.cardMargin),
             sidebarCard.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.cardTopMargin),
-            sidebarCard.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -Self.cardMargin),
+            sidebarCard.heightAnchor.constraint(equalToConstant: sidebarHeight),
             sidebarCard.widthAnchor.constraint(equalToConstant: sidebarWidth),
 
             contentContainer.leadingAnchor.constraint(equalTo: sidebarCard.trailingAnchor, constant: Self.cardGap),
@@ -219,7 +230,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         tableView.style = .sourceList
         tableView.headerView = nil
         tableView.backgroundColor = .clear
-        tableView.rowHeight = 36
+        tableView.rowHeight = sidebarRowHeight
         // Let the single column track the table's actual width instead of
         // a width computed by hand: with a hardcoded width and no leading
         // inset on the scroll view, the selection pill rendered flush
@@ -238,10 +249,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         background.addSubview(scrollView)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: background.topAnchor, constant: 8),
-            scrollView.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 7),
-            scrollView.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -7),
-            scrollView.bottomAnchor.constraint(equalTo: background.bottomAnchor)
+            scrollView.topAnchor.constraint(equalTo: background.topAnchor, constant: Self.sidebarPadding),
+            scrollView.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: Self.sidebarPadding),
+            scrollView.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -Self.sidebarPadding),
+            scrollView.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -Self.sidebarPadding)
         ])
         return wrapper
     }
