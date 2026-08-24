@@ -111,16 +111,19 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // never updates again. NSBox's fillColor is appearance-aware and
         // keeps resolving correctly, the same way the inner group cards
         // (makeCard) already do.
-        // The whole page is the gray backdrop now — the content side no
-        // longer has its own separate boxed/rounded fill, it's just this
-        // same gray showing through around the small (still white,
-        // still rounded) group cards. Only the sidebar remains a distinct
-        // floating card, in glass.
+        // The whole page is a plain white backdrop — the content side has
+        // no separate boxed/rounded fill of its own, this same white shows
+        // straight through around the small group cards. Only the sidebar
+        // remains a distinct floating card, in glass. controlBackgroundColor
+        // rather than literal white/#fff: it resolves to true white
+        // (255,255,255) in light mode too, but — unlike a hardcoded
+        // NSColor — still adapts correctly if the system is ever in Dark
+        // Mode instead of staying frozen white.
         let root = NSBox()
         root.boxType = .custom
         root.borderWidth = 0
         root.cornerRadius = 0
-        root.fillColor = .windowBackgroundColor
+        root.fillColor = .controlBackgroundColor
 
         let sidebarCard = buildSidebar()
         let contentContainer = buildContentContainer()
