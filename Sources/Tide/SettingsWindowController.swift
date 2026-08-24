@@ -708,6 +708,7 @@ private final class SidebarCellView: NSTableCellView {
     var isRowSelected = false {
         didSet {
             pillBackground.fillColor = isRowSelected ? .controlAccentColor : .clear
+            textField?.textColor = isRowSelected ? .white : .labelColor
         }
     }
 }
