@@ -2,6 +2,8 @@
 
 macOS menu bar app: hiển thị tốc độ tải xuống/tải lên theo thời gian thực, kèm công cụ chụp ảnh màn hình (vùng chọn / cửa sổ / toàn màn hình) ngay trong menu.
 
+Tạo bởi **Louis Chung**.
+
 ## Tính năng
 
 - Hiển thị tốc độ mạng dạng 2 dòng xếp chồng (`↑ 13 KB/s` trên, `↓ 1.6 MB/s` dưới) trực tiếp trên thanh menu bar, cập nhật mỗi giây.

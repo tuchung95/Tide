@@ -410,6 +410,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         card.widthAnchor.constraint(equalToConstant: 460).isActive = true
         stack.addArrangedSubview(card)
 
+        let creditLabel = NSTextField(labelWithString: "Created by Louis Chung")
+        creditLabel.font = NSFont.systemFont(ofSize: 11)
+        creditLabel.textColor = .tertiaryLabelColor
+        stack.addArrangedSubview(creditLabel)
+
         return stack
     }
 
