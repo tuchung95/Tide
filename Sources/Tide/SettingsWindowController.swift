@@ -103,14 +103,6 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private static let cardMargin: CGFloat = 10
     private static let cardGap: CGFloat = 10
     private static let cardCornerRadius: CGFloat = 10
-    /// #F9F9F9 in Light Mode, with a dynamic provider so it still adapts
-    /// to a reasonable dark-mode value instead of staying frozen light.
-    private static let pageFillColor = NSColor(name: nil) { appearance in
-        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        return isDark
-            ? NSColor(white: 0.12, alpha: 1)
-            : NSColor(srgbRed: 0xF9 / 255, green: 0xF9 / 255, blue: 0xF9 / 255, alpha: 1)
-    }
     // Bigger top inset than the other edges: with fullSizeContentView the
     // content area starts at the very top of the window, right where the
     // traffic-light buttons sit — a plain 10pt margin would run the
@@ -134,7 +126,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         root.boxType = .custom
         root.borderWidth = 0
         root.cornerRadius = 0
-        root.fillColor = Self.pageFillColor
+        // True white (255,255,255) in light mode, still Dark-Mode-aware
+        // (unlike a hardcoded literal white would be).
+        root.fillColor = .controlBackgroundColor
 
         let sidebarCard = buildSidebar()
         let contentContainer = buildContentContainer()
