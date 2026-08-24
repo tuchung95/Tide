@@ -1,7 +1,12 @@
 #!/bin/bash
 # Builds Tide, packages it as Tide.app, installs it to /Applications, and
-# publishes it as a GitHub Release so installed copies can auto-update
-# (see Sources/Tide/UpdateChecker.swift + UpdateInstaller.swift).
+# (unless SKIP_RELEASE=1) publishes it as a GitHub Release so installed
+# copies can auto-update (see Sources/Tide/UpdateChecker.swift +
+# UpdateInstaller.swift).
+#
+# Run `SKIP_RELEASE=1 ./Scripts/build_app.sh` for a local-only build+install
+# while iterating on small tweaks, without bumping Resources/VERSION or
+# publishing a public release each time.
 #
 # Compiles directly with swiftc rather than `swift build`: SwiftPM's
 # manifest resolution needs the platform SDK path from a full Xcode.app
@@ -15,6 +20,7 @@ APP_NAME="Tide"
 APP_BUNDLE="${APP_NAME}.app"
 SOURCES=(Sources/Tide/*.swift)
 REPO="tuchung95/Tide"
+SKIP_RELEASE="${SKIP_RELEASE:-0}"
 
 echo "Compiling release binary..."
 mkdir -p .build/release
@@ -24,13 +30,19 @@ swiftc -O -whole-module-optimization \
 
 # Bump the patch version on every build so each published release has a
 # strictly newer CFBundleShortVersionString for UpdateChecker to compare
-# against.
+# against — skipped when just building+installing locally (SKIP_RELEASE=1),
+# so VERSION stays pinned to whatever was last actually published.
 VERSION_FILE="Resources/VERSION"
 CURRENT_VERSION=$(cat "${VERSION_FILE}" 2>/dev/null || echo "1.0.0")
-IFS='.' read -r VMAJOR VMINOR VPATCH <<< "${CURRENT_VERSION}"
-NEW_VERSION="${VMAJOR}.${VMINOR}.$((VPATCH + 1))"
-echo "${NEW_VERSION}" > "${VERSION_FILE}"
-echo "Version: ${CURRENT_VERSION} -> ${NEW_VERSION}"
+if [ "${SKIP_RELEASE}" = "1" ]; then
+    NEW_VERSION="${CURRENT_VERSION}"
+    echo "SKIP_RELEASE=1: local build+install only, version stays ${NEW_VERSION}"
+else
+    IFS='.' read -r VMAJOR VMINOR VPATCH <<< "${CURRENT_VERSION}"
+    NEW_VERSION="${VMAJOR}.${VMINOR}.$((VPATCH + 1))"
+    echo "${NEW_VERSION}" > "${VERSION_FILE}"
+    echo "Version: ${CURRENT_VERSION} -> ${NEW_VERSION}"
+fi
 
 echo "Assembling ${APP_BUNDLE}..."
 rm -rf "${APP_BUNDLE}"
@@ -79,41 +91,46 @@ echo "Launched ${INSTALL_PATH}."
 echo "First screenshot capture will prompt for Screen Recording permission"
 echo "in System Settings > Privacy & Security."
 
-# Publish as a GitHub Release so other installed copies can find and
-# download this build via UpdateChecker. Best-effort: a network hiccup or
-# missing `gh` auth here shouldn't fail the local build+install above,
-# which already succeeded.
-echo ""
-echo "Publishing release v${NEW_VERSION}..."
-PUBLISH_OK=true
-ZIP_PATH=".build/${APP_NAME}-v${NEW_VERSION}.zip"
-rm -f "${ZIP_PATH}"
+if [ "${SKIP_RELEASE}" = "1" ]; then
+    echo ""
+    echo "SKIP_RELEASE=1: not publishing a release (local build+install only)."
+else
+    # Publish as a GitHub Release so other installed copies can find and
+    # download this build via UpdateChecker. Best-effort: a network hiccup
+    # or missing `gh` auth here shouldn't fail the local build+install
+    # above, which already succeeded.
+    echo ""
+    echo "Publishing release v${NEW_VERSION}..."
+    PUBLISH_OK=true
+    ZIP_PATH=".build/${APP_NAME}-v${NEW_VERSION}.zip"
+    rm -f "${ZIP_PATH}"
 
-if ! ditto -c -k --keepParent "${APP_BUNDLE}" "${ZIP_PATH}"; then
-    echo "Warning: failed to zip ${APP_BUNDLE}; skipping release publish."
-    PUBLISH_OK=false
-fi
-
-if [ "${PUBLISH_OK}" = true ]; then
-    git add "${VERSION_FILE}"
-    if ! git commit -m "Bump version to v${NEW_VERSION}" >/dev/null; then
-        echo "Warning: failed to commit version bump; skipping release publish."
+    if ! ditto -c -k --keepParent "${APP_BUNDLE}" "${ZIP_PATH}"; then
+        echo "Warning: failed to zip ${APP_BUNDLE}; skipping release publish."
         PUBLISH_OK=false
     fi
-fi
 
-if [ "${PUBLISH_OK}" = true ] && ! git push >/dev/null; then
-    echo "Warning: failed to push version bump commit; skipping release publish."
-    PUBLISH_OK=false
-fi
+    if [ "${PUBLISH_OK}" = true ]; then
+        git add "${VERSION_FILE}"
+        if ! git commit -m "Bump version to v${NEW_VERSION}" >/dev/null; then
+            echo "Warning: failed to commit version bump; skipping release publish."
+            PUBLISH_OK=false
+        fi
+    fi
 
-if [ "${PUBLISH_OK}" = true ]; then
-    if gh release create "v${NEW_VERSION}" "${ZIP_PATH}" \
-        --repo "${REPO}" \
-        --title "v${NEW_VERSION}" \
-        --notes "Automated build."; then
-        echo "Published: https://github.com/${REPO}/releases/tag/v${NEW_VERSION}"
-    else
-        echo "Warning: failed to create GitHub release v${NEW_VERSION}."
+    if [ "${PUBLISH_OK}" = true ] && ! git push >/dev/null; then
+        echo "Warning: failed to push version bump commit; skipping release publish."
+        PUBLISH_OK=false
+    fi
+
+    if [ "${PUBLISH_OK}" = true ]; then
+        if gh release create "v${NEW_VERSION}" "${ZIP_PATH}" \
+            --repo "${REPO}" \
+            --title "v${NEW_VERSION}" \
+            --notes "Automated build."; then
+            echo "Published: https://github.com/${REPO}/releases/tag/v${NEW_VERSION}"
+        else
+            echo "Warning: failed to create GitHub release v${NEW_VERSION}."
+        fi
     fi
 fi
