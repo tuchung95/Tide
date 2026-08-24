@@ -123,8 +123,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// flat white card — sitting with a margin on a plain white/light
     /// window backdrop. This mirrors that rather than one edge-to-edge
     /// split view.
-    // ≥ shadowPadding below, so the sidebar's shadow has room to spread
-    // before hitting the window's own edge.
+    // ≥ shadowPadding, so the sidebar's shadow has room to fade out
+    // before reaching the window's own edge.
     private static let cardMargin: CGFloat = 30
     private static let cardGap: CGFloat = 10
     private static let cardCornerRadius: CGFloat = 24
@@ -157,7 +157,15 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         let root = NSBox()
         root.boxType = .custom
         root.borderWidth = 0
-        root.cornerRadius = 12
+        // No cornerRadius of its own: giving root one clips its own
+        // subviews to that rounded shape near its corners (confirmed with
+        // isolated tests, independent of margin or sibling views) — the
+        // sidebar's drop shadow gets a hard notch cut into it right at its
+        // corner as a result. The window itself already has its own
+        // natural rounded corners courtesy of macOS's standard titled-
+        // window chrome, so the page still reads as rounded without root
+        // needing to redundantly clip to its own radius on top of that.
+        root.cornerRadius = 0
         // True white (255,255,255) in light mode, still Dark-Mode-aware
         // (unlike a hardcoded literal white would be).
         root.fillColor = .controlBackgroundColor
