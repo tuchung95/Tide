@@ -460,7 +460,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
                 let divider = NSBox()
                 divider.boxType = .custom
                 divider.borderWidth = 0
-                divider.fillColor = NSColor(white: 0.88, alpha: 1)
+                divider.fillColor = NSColor(white: 0.9, alpha: 1)
                 divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
                 stack.addArrangedSubview(divider)
             }
