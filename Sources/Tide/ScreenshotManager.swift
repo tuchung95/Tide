@@ -1,9 +1,10 @@
 import AppKit
 
 /// Wraps the system `screencapture` CLI to take selection / window / full
-/// screen screenshots. Each capture is saved to disk and copied to the
-/// clipboard. Requires the Screen Recording permission on macOS 10.15+;
-/// the system prompts for it automatically on first capture.
+/// screen screenshots. Each capture can go to disk, the clipboard, or both
+/// at once, per the caller's `Destinations`. Requires the Screen Recording
+/// permission on macOS 10.15+; the system prompts for it automatically on
+/// first capture.
 final class ScreenshotManager {
 
     enum Mode {
@@ -23,10 +24,19 @@ final class ScreenshotManager {
         }
     }
 
+    struct Destinations: OptionSet {
+        let rawValue: Int
+        static let file = Destinations(rawValue: 1 << 0)
+        static let clipboard = Destinations(rawValue: 1 << 1)
+    }
+
+    enum CaptureOutcome {
+        case captured
+        case cancelled
+    }
+
     enum CaptureError: Error {
         case processFailed(status: Int32)
-        case fileNotCreated
-        case imageLoadFailed
     }
 
     private let screenshotsDirectory: URL
@@ -38,48 +48,59 @@ final class ScreenshotManager {
         try? FileManager.default.createDirectory(at: screenshotsDirectory, withIntermediateDirectories: true)
     }
 
-    /// Runs `screencapture` for the given mode. Completion is called on the
-    /// main thread with the saved file URL, or nil if the user cancelled an
-    /// interactive capture (Esc), or an error if the capture itself failed.
-    func capture(mode: Mode, completion: @escaping (Result<URL?, Error>) -> Void) {
-        let filename = Self.timestampedFilename()
-        let destination = screenshotsDirectory.appendingPathComponent(filename)
+    /// Runs `screencapture` for the given mode and destinations. Completion
+    /// is called on the main thread with `.cancelled` if the user pressed
+    /// Esc during an interactive capture, or an error if the capture itself
+    /// failed. Passing an empty `destinations` completes as `.cancelled`
+    /// without touching the screen.
+    func capture(mode: Mode, destinations: Destinations, completion: @escaping (Result<CaptureOutcome, Error>) -> Void) {
+        guard !destinations.isEmpty else {
+            completion(.success(.cancelled))
+            return
+        }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        process.arguments = mode.arguments + [destination.path]
+
+        // screencapture can't take both a file path and -c at once, so when
+        // saving to a file is wanted (alone or alongside the clipboard),
+        // that's the one real invocation; a same-image clipboard copy is
+        // then done by hand from the saved file. Clipboard-only (no file)
+        // uses screencapture's own -c instead, since there's no file to
+        // mirror from.
+        let savesToFile = destinations.contains(.file)
+        let fileURL = savesToFile ? screenshotsDirectory.appendingPathComponent(Self.timestampedFilename()) : nil
+
+        if let fileURL {
+            process.arguments = mode.arguments + [fileURL.path]
+        } else {
+            process.arguments = mode.arguments + ["-c"]
+        }
 
         process.terminationHandler = { finishedProcess in
             DispatchQueue.main.async {
-                let fileExists = FileManager.default.fileExists(atPath: destination.path)
+                guard let fileURL else {
+                    completion(.success(finishedProcess.terminationStatus == 0 ? .captured : .cancelled))
+                    return
+                }
 
-                // Interactive captures return a non-zero status when the
-                // user cancels (Esc) and no file is written; treat that as
-                // a clean cancellation rather than an error.
+                let fileExists = FileManager.default.fileExists(atPath: fileURL.path)
                 guard finishedProcess.terminationStatus == 0 || fileExists else {
-                    if !fileExists {
-                        completion(.success(nil))
-                        return
-                    }
                     completion(.failure(CaptureError.processFailed(status: finishedProcess.terminationStatus)))
                     return
                 }
-
                 guard fileExists else {
-                    completion(.success(nil))
+                    completion(.success(.cancelled))
                     return
                 }
 
-                guard let image = NSImage(contentsOf: destination) else {
-                    completion(.failure(CaptureError.imageLoadFailed))
-                    return
+                if destinations.contains(.clipboard), let image = NSImage(contentsOf: fileURL) {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.writeObjects([image])
                 }
 
-                let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                pasteboard.writeObjects([image])
-
-                completion(.success(destination))
+                completion(.success(.captured))
             }
         }
 

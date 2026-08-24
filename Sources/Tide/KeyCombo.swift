@@ -67,7 +67,11 @@ struct KeyCombo: Codable, Equatable {
     ]
 }
 
-/// The actions Tide lets you trigger with a global shortcut.
+/// The capture types Tide lets you trigger with a global shortcut. Whether
+/// each one saves to disk, copies to the clipboard, or both at once is a
+/// separate, independently toggleable setting — see CaptureSettingsStore —
+/// so one shortcut per type is enough regardless of which destinations are
+/// currently on.
 enum ShortcutAction: String, CaseIterable {
     case selectedArea
     case window
@@ -75,9 +79,17 @@ enum ShortcutAction: String, CaseIterable {
 
     var displayName: String {
         switch self {
-        case .selectedArea: return "Selected Area"
-        case .window: return "Window"
+        case .selectedArea: return "Selected Area…"
+        case .window: return "Window…"
         case .fullScreen: return "Full Screen"
+        }
+    }
+
+    var captureMode: ScreenshotManager.Mode {
+        switch self {
+        case .selectedArea: return .selection
+        case .window: return .window
+        case .fullScreen: return .fullScreen
         }
     }
 
@@ -86,9 +98,9 @@ enum ShortcutAction: String, CaseIterable {
     /// second global registration on the same combo would just never fire.
     var defaultCombo: KeyCombo {
         switch self {
-        case .fullScreen: return KeyCombo(keyCode: 20, modifierFlags: [.control, .shift]) // 3
-        case .selectedArea: return KeyCombo(keyCode: 21, modifierFlags: [.control, .shift]) // 4
-        case .window: return KeyCombo(keyCode: 23, modifierFlags: [.control, .shift]) // 5
+        case .fullScreen: return KeyCombo(keyCode: 20, modifierFlags: [.control, .shift]) // ⌃⇧3
+        case .selectedArea: return KeyCombo(keyCode: 21, modifierFlags: [.control, .shift]) // ⌃⇧4
+        case .window: return KeyCombo(keyCode: 23, modifierFlags: [.control, .shift]) // ⌃⇧5
         }
     }
 }

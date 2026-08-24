@@ -11,10 +11,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private let networkMonitor = NetworkMonitor()
     private let screenshotManager = ScreenshotManager()
+    private lazy var captureSound = Bundle.main.url(forResource: "CaptureSound", withExtension: "mp3")
+        .flatMap { NSSound(contentsOf: $0, byReference: true) }
 
     private let hotKeyManager = HotKeyManager.shared
     private var hotKeyIDs: [ShortcutAction: UInt32] = [:]
-    private var shortcutsWindowController: ShortcutsWindowController?
+    private var settingsWindowController: SettingsWindowController?
 
     // Small per-line font so two stacked lines still fit the menu bar's height.
     private lazy var statusFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
@@ -41,6 +43,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.refreshSpeed()
         }
         RunLoop.main.add(updateTimer!, forMode: .common)
+
+        // Delayed slightly so it never competes with app launch for the
+        // network stack; silent unless a newer version is actually found.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.checkForUpdates(silent: true)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -87,7 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let up = SpeedFormatter.format(bytesPerSecond: sample.uploadBytesPerSecond)
         lastSpeedImage = Self.stackedImage(up: up, down: down, font: statusFont)
 
-        // Don't stomp on the "✓ Copied" confirmation while it's showing.
+        // Don't stomp on the capture confirmation while it's showing.
         guard !isShowingCaptureFeedback else { return }
         statusItem.button?.image = lastSpeedImage
     }
@@ -138,9 +146,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         screenshotHeader.isEnabled = false
         menu.addItem(screenshotHeader)
 
-        let selectedAreaItem = makeItem("Selected Area…", action: #selector(captureSelection), symbol: "crop")
-        let windowItem = makeItem("Window…", action: #selector(captureWindow), symbol: "macwindow")
-        let fullScreenItem = makeItem("Full Screen", action: #selector(captureFullScreen), symbol: "rectangle.dashed")
+        let selectedAreaItem = makeCaptureItem(.selectedArea, symbol: "crop")
+        let windowItem = makeCaptureItem(.window, symbol: "macwindow")
+        let fullScreenItem = makeCaptureItem(.fullScreen, symbol: "rectangle.dashed")
         captureMenuItems = [.selectedArea: selectedAreaItem, .window: windowItem, .fullScreen: fullScreenItem]
         menu.addItem(selectedAreaItem)
         menu.addItem(windowItem)
@@ -148,11 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        menu.addItem(makeItem("Keyboard Shortcuts…", action: #selector(openShortcutsWindow), symbol: "keyboard"))
-
-        let launchItem = makeItem("Launch at Login", action: #selector(toggleLaunchAtLogin), symbol: "power")
-        launchItem.state = LoginItemManager.isEnabled ? .on : .off
-        menu.addItem(launchItem)
+        menu.addItem(makeItem("Settings…", action: #selector(openSettingsWindow), key: ",", symbol: "gearshape"))
 
         menu.addItem(.separator())
         // Default keyEquivalentModifierMask is .command, so this reads as Cmd+Q.
@@ -189,40 +193,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return item
     }
 
-    @objc private func captureSelection() {
-        runCapture(.selection)
+    private func makeCaptureItem(_ action: ShortcutAction, symbol: String) -> NSMenuItem {
+        let item = makeItem(action.displayName, action: #selector(handleMenuCapture(_:)), symbol: symbol)
+        item.representedObject = action
+        return item
     }
 
-    @objc private func captureWindow() {
-        runCapture(.window)
+    @objc private func handleMenuCapture(_ sender: NSMenuItem) {
+        guard let action = sender.representedObject as? ShortcutAction else { return }
+        performCapture(action)
     }
 
-    @objc private func captureFullScreen() {
-        runCapture(.fullScreen)
-    }
+    /// Captures using whichever destinations are currently enabled for this
+    /// action (Save to Desktop and/or Copy to Clipboard, independently
+    /// toggled in Settings). If neither is on, this is a no-op.
+    private func performCapture(_ action: ShortcutAction) {
+        var destinations: ScreenshotManager.Destinations = []
+        if CaptureSettingsStore.isSaveEnabled(for: action) { destinations.insert(.file) }
+        if CaptureSettingsStore.isCopyEnabled(for: action) { destinations.insert(.clipboard) }
+        guard !destinations.isEmpty else { return }
 
-    private func runCapture(_ mode: ScreenshotManager.Mode) {
-        screenshotManager.capture(mode: mode) { [weak self] result in
+        screenshotManager.capture(mode: action.captureMode, destinations: destinations) { [weak self] result in
             switch result {
-            case .success(let url) where url != nil:
-                self?.showCaptureConfirmation()
-            case .success:
-                break // user cancelled an interactive capture
+            case .success(.captured):
+                self?.showCaptureConfirmation(destinations: destinations)
+            case .success(.cancelled):
+                break
             case .failure(let error):
                 NSLog("Tide: screenshot capture failed: \(error)")
             }
         }
     }
 
-    /// Briefly flashes "✓ Copied" in the menu bar with a short sound to
-    /// confirm the screenshot was copied to the clipboard, then reverts to
-    /// the current speed reading.
-    private func showCaptureConfirmation() {
+    /// Briefly flashes a confirmation ("✓ Saved", "✓ Copied", or "✓ Saved &
+    /// Copied") in the menu bar with a short sound, then reverts to the
+    /// current speed reading.
+    private func showCaptureConfirmation(destinations: ScreenshotManager.Destinations) {
         feedbackResetWorkItem?.cancel()
         isShowingCaptureFeedback = true
         statusItem.button?.image = nil
-        statusItem.button?.title = "✓ Copied"
-        NSSound(named: "Pop")?.play()
+        statusItem.button?.title = Self.confirmationLabel(for: destinations)
+
+        if let captureSound {
+            captureSound.stop()
+            captureSound.play()
+        }
 
         let resetWorkItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -234,24 +249,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: resetWorkItem)
     }
 
-    @objc private func openShortcutsWindow() {
-        if shortcutsWindowController == nil {
-            let controller = ShortcutsWindowController()
-            controller.applyChange = { [weak self] action, combo in
-                self?.applyShortcutChange(action: action, combo: combo) ?? false
-            }
-            shortcutsWindowController = controller
+    private static func confirmationLabel(for destinations: ScreenshotManager.Destinations) -> String {
+        switch (destinations.contains(.file), destinations.contains(.clipboard)) {
+        case (true, true): return "✓ Saved & Copied"
+        case (true, false): return "✓ Saved"
+        case (false, true): return "✓ Copied"
+        case (false, false): return "✓ Done"
         }
-        NSApp.activate(ignoringOtherApps: true)
-        shortcutsWindowController?.showWindow(nil)
-        shortcutsWindowController?.window?.makeKeyAndOrderFront(nil)
     }
 
-    private func handleShortcut(_ action: ShortcutAction) {
-        switch action {
-        case .selectedArea: captureSelection()
-        case .window: captureWindow()
-        case .fullScreen: captureFullScreen()
+    @objc private func openSettingsWindow() {
+        if settingsWindowController == nil {
+            let controller = SettingsWindowController()
+            controller.applyShortcutChange = { [weak self] action, combo in
+                self?.applyShortcutChange(action: action, combo: combo) ?? false
+            }
+            controller.checkForUpdates = { [weak self] in
+                self?.checkForUpdates(silent: false)
+            }
+            settingsWindowController = controller
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        settingsWindowController?.showWindow(nil)
+        settingsWindowController?.window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// `silent`: on launch, say nothing if already up to date (no need to
+    /// interrupt startup with an "up to date" alert). From a manual "Check
+    /// for Updates…" click, always report the result either way.
+    private func checkForUpdates(silent: Bool) {
+        UpdateChecker.checkForUpdate { [weak self] update in
+            DispatchQueue.main.async {
+                guard self != nil else { return }
+
+                guard let update else {
+                    if !silent {
+                        let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+                        let alert = NSAlert()
+                        alert.messageText = "You're up to date"
+                        alert.informativeText = "Tide \(currentVersion) is the latest version."
+                        NSApp.activate(ignoringOtherApps: true)
+                        alert.runModal()
+                    }
+                    return
+                }
+
+                let alert = NSAlert()
+                alert.messageText = "Update Available"
+                alert.informativeText = "Tide \(update.version) is available. Download and install now? Tide will quit and reopen automatically."
+                alert.addButton(withTitle: "Update Now")
+                alert.addButton(withTitle: "Later")
+                NSApp.activate(ignoringOtherApps: true)
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+                UpdateInstaller.downloadAndInstall(from: update.downloadURL) { result in
+                    DispatchQueue.main.async {
+                        guard case .failure(let error) = result else { return } // success quits the app itself
+                        let errorAlert = NSAlert()
+                        errorAlert.messageText = "Update Failed"
+                        errorAlert.informativeText = "\(error)"
+                        errorAlert.runModal()
+                    }
+                }
+            }
         }
     }
 
@@ -265,7 +325,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let combo = ShortcutStore.combo(for: action) else { return true } // no shortcut assigned
 
         guard let id = hotKeyManager.register(combo: combo, handler: { [weak self] in
-            self?.handleShortcut(action)
+            self?.performCapture(action)
         }) else {
             return false
         }
@@ -274,10 +334,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return true
     }
 
-    /// Applies a shortcut change requested from the Keyboard Shortcuts
-    /// window: unregisters the old hotkey, tries to register the new one,
-    /// and only persists it if that succeeds. On failure, restores whatever
-    /// was previously registered.
+    /// Applies a shortcut change requested from Settings: unregisters the
+    /// old hotkey, tries to register the new one, and only persists it if
+    /// that succeeds. On failure, restores whatever was previously
+    /// registered.
     private func applyShortcutChange(action: ShortcutAction, combo: KeyCombo?) -> Bool {
         if let id = hotKeyIDs.removeValue(forKey: action) {
             hotKeyManager.unregister(id: id)
@@ -290,7 +350,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         guard let id = hotKeyManager.register(combo: combo, handler: { [weak self] in
-            self?.handleShortcut(action)
+            self?.performCapture(action)
         }) else {
             registerHotKey(for: action) // restore the previously active shortcut
             return false
@@ -300,12 +360,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ShortcutStore.setCombo(combo, for: action)
         refreshShortcutMenuItems()
         return true
-    }
-
-    @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
-        let newState = !LoginItemManager.isEnabled
-        LoginItemManager.isEnabled = newState
-        sender.state = newState ? .on : .off
     }
 
     @objc private func quit() {
