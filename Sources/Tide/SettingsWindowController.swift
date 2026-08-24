@@ -51,7 +51,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private static let captureActions: [ShortcutAction] = [.selectedArea, .window, .fullScreen]
     private static let sidebarCellIdentifier = NSUserInterfaceItemIdentifier("SidebarCell")
 
-    private let sidebarWidth: CGFloat = 180
+    private let sidebarWidth: CGFloat = 220
     private let rowHeight: CGFloat = 40
     // 24pt icon + 8pt above/below = 40pt, so each item's vertical padding
     // matches its horizontal padding (sidebarPadding) instead of the ~6pt
@@ -72,7 +72,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 360),
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 360),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
