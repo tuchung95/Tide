@@ -60,7 +60,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     // Gap between the item list (scrollView) and the sidebar card's own
     // edges — independent from sidebarItemPadding below, even though both
     // happen to be 8pt right now.
-    private static let sidebarListInset: CGFloat = 8
+    private static let sidebarListInset: CGFloat = 2
     // Padding around each item's own content (icon/text) within its row.
     private static let sidebarItemPadding: CGFloat = 8
 
