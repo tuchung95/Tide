@@ -123,10 +123,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// flat white card — sitting with a margin on a plain white/light
     /// window backdrop. This mirrors that rather than one edge-to-edge
     /// split view.
-    // Big enough (> shadowRadius + shadow offset, see buildSidebar) that
-    // the sidebar's shadow has room to render fully instead of being cut
-    // off by the window edge on the left/bottom.
-    private static let cardMargin: CGFloat = 28
+    private static let cardMargin: CGFloat = 10
     private static let cardGap: CGFloat = 10
     private static let cardCornerRadius: CGFloat = 24
     // The small group cards in the right-hand panes get their own,
