@@ -364,6 +364,17 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         return label
     }
 
+    /// #F7F7F7 in Light Mode — the exact requested value — with a dynamic
+    /// provider (rather than a plain literal NSColor) so it still adapts
+    /// to a reasonable dark-mode fill instead of staying frozen white-gray
+    /// when the system switches appearance.
+    private static let smallCardFillColor = NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return isDark
+            ? NSColor(white: 0.16, alpha: 1)
+            : NSColor(srgbRed: 0xF7 / 255, green: 0xF7 / 255, blue: 0xF7 / 255, alpha: 1)
+    }
+
     /// A rounded, filled group box with hairline dividers between its rows
     /// — System Settings' basic building block for every pane.
     private func makeCard(rows: [NSView]) -> NSView {
@@ -374,7 +385,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // Now that the page itself is pure white, the card needs its own
         // gray fill to read as a distinct card at all — controlBackgroundColor
         // (also white) was flush with the page and invisible.
-        box.fillColor = .windowBackgroundColor
+        box.fillColor = Self.smallCardFillColor
         box.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView()
