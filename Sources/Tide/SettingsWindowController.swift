@@ -111,19 +111,24 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // never updates again. NSBox's fillColor is appearance-aware and
         // keeps resolving correctly, the same way the inner group cards
         // (makeCard) already do.
+        // The whole page is the gray backdrop now — the content side no
+        // longer has its own separate boxed/rounded fill, it's just this
+        // same gray showing through around the small (still white,
+        // still rounded) group cards. Only the sidebar remains a distinct
+        // floating card, in glass.
         let root = NSBox()
         root.boxType = .custom
         root.borderWidth = 0
         root.cornerRadius = 0
-        root.fillColor = .controlBackgroundColor
+        root.fillColor = .windowBackgroundColor
 
         let sidebarCard = buildSidebar()
-        let contentCard = buildContentCard()
+        let contentContainer = buildContentContainer()
 
         sidebarCard.translatesAutoresizingMaskIntoConstraints = false
-        contentCard.translatesAutoresizingMaskIntoConstraints = false
+        contentContainer.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(sidebarCard)
-        root.addSubview(contentCard)
+        root.addSubview(contentContainer)
 
         NSLayoutConstraint.activate([
             sidebarCard.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.cardMargin),
@@ -131,39 +136,35 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             sidebarCard.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -Self.cardMargin),
             sidebarCard.widthAnchor.constraint(equalToConstant: sidebarWidth),
 
-            contentCard.leadingAnchor.constraint(equalTo: sidebarCard.trailingAnchor, constant: Self.cardGap),
-            contentCard.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.cardTopMargin),
-            contentCard.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -Self.cardMargin),
-            contentCard.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -Self.cardMargin)
+            contentContainer.leadingAnchor.constraint(equalTo: sidebarCard.trailingAnchor, constant: Self.cardGap),
+            contentContainer.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.cardTopMargin),
+            contentContainer.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -Self.cardMargin),
+            contentContainer.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -Self.cardMargin)
         ])
 
         window?.contentView = root
     }
 
-    /// The flat, light-gray rounded card the right-hand pane content sits
-    /// in — as opposed to the sidebar's frosted glass card and the plain
-    /// white page behind both.
-    private func buildContentCard() -> NSView {
-        let card = NSBox()
-        card.boxType = .custom
-        card.borderWidth = 0
-        card.cornerRadius = Self.cardCornerRadius
-        card.fillColor = .windowBackgroundColor
+    /// Plain, unstyled container for the right-hand pane content — no
+    /// background fill or corner radius of its own; the page's gray shows
+    /// straight through around the small white group cards inside each pane.
+    private func buildContentContainer() -> NSView {
+        let container = NSView()
 
         for tab in Tab.allCases {
             let pane = buildPane(for: tab)
             pane.translatesAutoresizingMaskIntoConstraints = false
             pane.isHidden = true
-            card.addSubview(pane)
+            container.addSubview(pane)
             NSLayoutConstraint.activate([
-                pane.topAnchor.constraint(equalTo: card.topAnchor, constant: 24),
-                pane.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 24),
-                pane.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -24)
+                pane.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
+                pane.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
+                pane.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -24)
             ])
             panes[tab] = pane
         }
 
-        return card
+        return container
     }
 
     // MARK: - Sidebar (native NSTableView, .sourceList style)
