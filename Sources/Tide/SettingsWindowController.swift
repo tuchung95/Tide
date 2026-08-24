@@ -77,8 +77,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private var panes: [Tab: NSView] = [:]
 
     private var recorders: [ShortcutAction: ShortcutRecorderControl] = [:]
-    private var saveSwitches: [ShortcutAction: NSSwitch] = [:]
-    private var copySwitches: [ShortcutAction: NSSwitch] = [:]
+    private var saveSwitches: [ShortcutAction: NSButton] = [:]
+    private var copySwitches: [ShortcutAction: NSButton] = [:]
     private var launchAtLoginSwitch: NSSwitch!
 
     convenience init() {
@@ -579,17 +579,18 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     }
 
     private func makeScreenshotRow(for action: ShortcutAction) -> NSView {
-        let saveSwitch = NSSwitch()
+        // NSButton(checkboxWithTitle:) rather than NSSwitch: this pane's
+        // Save/Copy options are per-destination toggles, closer in meaning
+        // to macOS's checkbox convention ("which of these apply") than the
+        // single on/off switch convention used elsewhere (e.g. Launch at
+        // Login).
+        let saveSwitch = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggleSave(_:)))
         saveSwitch.state = CaptureSettingsStore.isSaveEnabled(for: action) ? .on : .off
-        saveSwitch.target = self
-        saveSwitch.action = #selector(toggleSave(_:))
         saveSwitch.tag = Self.captureActions.firstIndex(of: action) ?? 0
         saveSwitches[action] = saveSwitch
 
-        let copySwitch = NSSwitch()
+        let copySwitch = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggleCopy(_:)))
         copySwitch.state = CaptureSettingsStore.isCopyEnabled(for: action) ? .on : .off
-        copySwitch.target = self
-        copySwitch.action = #selector(toggleCopy(_:))
         copySwitch.tag = Self.captureActions.firstIndex(of: action) ?? 0
         copySwitches[action] = copySwitch
 
@@ -610,7 +611,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         return makeRow(leading: NSTextField(labelWithString: action.displayName), trailing: trailing)
     }
 
-    @objc private func toggleSave(_ sender: NSSwitch) {
+    @objc private func toggleSave(_ sender: NSButton) {
         let action = Self.captureActions[sender.tag]
         let enabling = sender.state == .on
         guard enabling || CaptureSettingsStore.isCopyEnabled(for: action) else {
@@ -622,7 +623,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         CaptureSettingsStore.setSaveEnabled(enabling, for: action)
     }
 
-    @objc private func toggleCopy(_ sender: NSSwitch) {
+    @objc private func toggleCopy(_ sender: NSButton) {
         let action = Self.captureActions[sender.tag]
         let enabling = sender.state == .on
         guard enabling || CaptureSettingsStore.isSaveEnabled(for: action) else {
