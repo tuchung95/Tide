@@ -123,9 +123,15 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// flat white card — sitting with a margin on a plain white/light
     /// window backdrop. This mirrors that rather than one edge-to-edge
     /// split view.
-    private static let cardMargin: CGFloat = 10
+    // ≥ shadowPadding below, so the sidebar's shadow has room to spread
+    // before hitting the window's own edge.
+    private static let cardMargin: CGFloat = 30
     private static let cardGap: CGFloat = 10
     private static let cardCornerRadius: CGFloat = 24
+    // How much bigger than the sidebar card ShadowCardView is made, on
+    // every side, so its shadowBlurRadius (24, offset (0,-3)) has room to
+    // fade out within its own bounds instead of being clipped by them.
+    private static let shadowPadding: CGFloat = 28
     // The small group cards in the right-hand panes get their own,
     // smaller radius rather than sharing the sidebar's.
     private static let smallCardCornerRadius: CGFloat = 12
@@ -193,17 +199,39 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     // MARK: - Sidebar (native NSTableView, .sourceList style)
 
     private func buildSidebar() -> NSView {
-        // The shadow lives on an outer plain wrapper rather than the glass
-        // view itself, so the glass view is free to clip its own content to
-        // its rounded corners without also clipping away the shadow drawn
-        // around it. Drawn with NSShadow inside draw(_:) rather than
-        // CALayer's shadowColor/shadowOpacity/shadowRadius: those CALayer
-        // properties silently don't render at all on this machine (verified
-        // with isolated test windows at maximum settings — solid color,
-        // opacity 1, explicit shadowPath, fully layer-backed ancestor
-        // chain), while plain Core Graphics drawing via draw(_:) does.
-        let wrapper = ShadowCardView()
-        wrapper.cornerRadius = Self.cardCornerRadius
+        // `container`'s own bounds are exactly the visible card's bounds —
+        // buildContent() positions it against root with cardMargin/width,
+        // and other layout (e.g. the content panes' leading anchor) is
+        // relative to its trailing edge, so it needs to keep representing
+        // the card's actual footprint, not anything padded for the shadow.
+        // It's a plain, non-layer-backed NSView, which in AppKit doesn't
+        // clip its subviews to its own bounds — that's what lets shadowView
+        // below draw outside container's edges without being cut off.
+        let container = NSView()
+
+        // A separate, larger view behind the glass card exists solely to
+        // draw the drop shadow: NSShadow inside draw(_:) (plain Core
+        // Graphics) rather than CALayer's shadowColor/shadowOpacity/
+        // shadowRadius, since those CALayer properties silently don't
+        // render at all on this machine (verified with isolated test
+        // windows at maximum settings — solid color, opacity 1, explicit
+        // shadowPath, fully layer-backed ancestor chain). But draw(_:) is
+        // clipped to the drawing view's own bounds, unlike a CALayer shadow
+        // which paints outside the layer's bounds freely — so this view is
+        // sized shadowPadding larger than the card on every side, with the
+        // shape it draws inset back down to the card's actual size, giving
+        // the blur room to spread before hitting this view's own edge.
+        let shadowView = ShadowCardView()
+        shadowView.cornerRadius = Self.cardCornerRadius
+        shadowView.contentInset = Self.shadowPadding
+        shadowView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(shadowView)
+        NSLayoutConstraint.activate([
+            shadowView.topAnchor.constraint(equalTo: container.topAnchor, constant: -Self.shadowPadding),
+            shadowView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: -Self.shadowPadding),
+            shadowView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: Self.shadowPadding),
+            shadowView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: Self.shadowPadding)
+        ])
 
         // Plain solid fill instead of the frosted-glass NSVisualEffectView
         // this used to be — same F7F7F7 as the small group cards, for a
@@ -218,12 +246,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         background.fillColor = Self.smallCardFillColor
         background.translatesAutoresizingMaskIntoConstraints = false
 
-        wrapper.addSubview(background)
+        container.addSubview(background)
         NSLayoutConstraint.activate([
-            background.topAnchor.constraint(equalTo: wrapper.topAnchor),
-            background.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
-            background.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
-            background.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor)
+            background.topAnchor.constraint(equalTo: container.topAnchor),
+            background.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            background.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            background.bottomAnchor.constraint(equalTo: container.bottomAnchor)
         ])
 
         let scrollView = NSScrollView()
@@ -272,7 +300,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             scrollView.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -Self.sidebarListInset),
             scrollView.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -Self.sidebarListInset)
         ])
-        return wrapper
+        return container
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
@@ -698,6 +726,11 @@ private final class ShadowCardView: NSView {
     var shadowOpacity: CGFloat = 0.4
     var shadowBlurRadius: CGFloat = 24
     var shadowOffset: NSSize = NSSize(width: 0, height: -3)
+    // How far in from this view's own bounds the drawn (shadow-casting)
+    // shape sits — draw(_:) is clipped to the view's own bounds, so this
+    // needs to match however much bigger than that shape this view itself
+    // was made, or the blur has no room to spread before being cut off.
+    var contentInset: CGFloat = 0
 
     override func draw(_ dirtyRect: NSRect) {
         NSGraphicsContext.saveGraphicsState()
@@ -707,7 +740,8 @@ private final class ShadowCardView: NSView {
         shadow.shadowOffset = shadowOffset
         shadow.set()
         NSColor.black.setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius).fill()
+        let shapeRect = bounds.insetBy(dx: contentInset, dy: contentInset)
+        NSBezierPath(roundedRect: shapeRect, xRadius: cornerRadius, yRadius: cornerRadius).fill()
         NSGraphicsContext.restoreGraphicsState()
     }
 }
