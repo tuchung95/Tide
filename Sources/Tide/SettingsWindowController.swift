@@ -151,7 +151,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         let root = NSBox()
         root.boxType = .custom
         root.borderWidth = 0
-        root.cornerRadius = 24
+        root.cornerRadius = 12
         // True white (255,255,255) in light mode, still Dark-Mode-aware
         // (unlike a hardcoded literal white would be).
         root.fillColor = .controlBackgroundColor
@@ -194,24 +194,16 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     private func buildSidebar() -> NSView {
         // The shadow lives on an outer plain wrapper rather than the glass
-        // view itself: the glass view needs masksToBounds = true to clip
-        // its content to the rounded corners, but that would also clip
-        // away any shadow drawn on the same layer (a shadow renders outside
-        // the layer's own bounds).
-        let wrapper = NSView()
-        wrapper.wantsLayer = true
-        wrapper.layer?.shadowColor = NSColor.black.cgColor
-        wrapper.layer?.shadowOpacity = 0.4
-        wrapper.layer?.shadowRadius = 24
-        wrapper.layer?.shadowOffset = NSSize(width: 0, height: -3)
-        // Without an explicit shadowPath, CALayer derives the shadow's
-        // shape from the layer's own bounds + cornerRadius. The wrapper
-        // itself was still a plain rectangle (masksToBounds is off here on
-        // purpose, so the shadow can render outside its bounds), so its
-        // shadow followed square corners while the glass card underneath
-        // is rounded — the mismatch showed as small gray triangular
-        // wedges poking past the card's rounded corners.
-        wrapper.layer?.cornerRadius = Self.cardCornerRadius
+        // view itself, so the glass view is free to clip its own content to
+        // its rounded corners without also clipping away the shadow drawn
+        // around it. Drawn with NSShadow inside draw(_:) rather than
+        // CALayer's shadowColor/shadowOpacity/shadowRadius: those CALayer
+        // properties silently don't render at all on this machine (verified
+        // with isolated test windows at maximum settings — solid color,
+        // opacity 1, explicit shadowPath, fully layer-backed ancestor
+        // chain), while plain Core Graphics drawing via draw(_:) does.
+        let wrapper = ShadowCardView()
+        wrapper.cornerRadius = Self.cardCornerRadius
 
         // Plain solid fill instead of the frosted-glass NSVisualEffectView
         // this used to be — same F7F7F7 as the small group cards, for a
@@ -689,6 +681,34 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
                 recorders[action]?.combo = combo
             }
         }
+    }
+}
+
+/// A plain view that draws a rounded, drop-shadowed backdrop behind
+/// whatever's layered on top of it. Uses NSShadow inside draw(_:) — plain
+/// Core Graphics drawing — rather than CALayer's shadow properties, which
+/// don't render on this machine regardless of configuration (see the
+/// comment where this is used in buildSidebar). The drawn shape itself is
+/// invisible in practice: it's always fully covered by an opaque sibling
+/// view of the same bounds/corner radius sitting on top, so only the
+/// shadow that spills past its edges ever shows.
+private final class ShadowCardView: NSView {
+    var cornerRadius: CGFloat = 0
+    var shadowColor: NSColor = .black
+    var shadowOpacity: CGFloat = 0.4
+    var shadowBlurRadius: CGFloat = 24
+    var shadowOffset: NSSize = NSSize(width: 0, height: -3)
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSGraphicsContext.saveGraphicsState()
+        let shadow = NSShadow()
+        shadow.shadowColor = shadowColor.withAlphaComponent(shadowOpacity)
+        shadow.shadowBlurRadius = shadowBlurRadius
+        shadow.shadowOffset = shadowOffset
+        shadow.set()
+        NSColor.black.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius).fill()
+        NSGraphicsContext.restoreGraphicsState()
     }
 }
 
