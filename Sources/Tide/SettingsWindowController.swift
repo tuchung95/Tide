@@ -70,6 +70,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             defer: false
         )
         window.title = "Settings"
+        // System Settings itself never shows a title next to the traffic
+        // lights when a sidebar + pane is on screen; the bold in-pane
+        // heading already says which tab is showing, so a title bar label
+        // here would just duplicate it.
+        window.titleVisibility = .hidden
         window.isReleasedWhenClosed = false
         window.center()
         self.init(window: window)
@@ -140,11 +145,17 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         tableView.headerView = nil
         tableView.backgroundColor = .clear
         tableView.rowHeight = 32
+        // Let the single column track the table's actual width instead of
+        // a width computed by hand: with a hardcoded width and no leading
+        // inset on the scroll view, the selection pill rendered flush
+        // against the left edge with an uneven, asymmetric margin instead
+        // of the centered rounded highlight System Settings shows.
+        tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         tableView.dataSource = self
         tableView.delegate = self
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("sidebar"))
-        column.width = sidebarWidth - 16
+        column.minWidth = 50
         tableView.addTableColumn(column)
 
         scrollView.documentView = tableView
@@ -153,8 +164,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         background.addSubview(scrollView)
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: background.topAnchor, constant: 8),
-            scrollView.leadingAnchor.constraint(equalTo: background.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: background.trailingAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 7),
+            scrollView.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -7),
             scrollView.bottomAnchor.constraint(equalTo: background.bottomAnchor)
         ])
         return background
@@ -201,7 +212,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         cell.textField = textField
 
         NSLayoutConstraint.activate([
-            imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+            imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
             imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             imageView.widthAnchor.constraint(equalToConstant: 20),
             imageView.heightAnchor.constraint(equalToConstant: 20),
@@ -260,7 +271,6 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         for (candidate, pane) in panes {
             pane.isHidden = (candidate != tab)
         }
-        window?.title = tab.title
     }
 
     private func buildPane(for tab: Tab) -> NSView {
