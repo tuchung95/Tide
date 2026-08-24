@@ -53,7 +53,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     private let sidebarWidth: CGFloat = 180
     private let rowHeight: CGFloat = 40
-    private let sidebarRowHeight: CGFloat = 36
+    // 24pt icon + 8pt above/below = 40pt, so each item's vertical padding
+    // matches its horizontal padding (sidebarPadding) instead of the ~6pt
+    // it worked out to before.
+    private let sidebarRowHeight: CGFloat = 40
     // Same value on all four sides around the nav item list, inside the
     // sidebar card.
     private static let sidebarPadding: CGFloat = 8
