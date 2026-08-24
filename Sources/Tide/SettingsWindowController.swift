@@ -65,7 +65,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private static let sidebarItemPadding: CGFloat = 8
     // Gap between a sidebar item's icon and its label text.
     private static let sidebarIconTextGap: CGFloat = 8
-    // Padding around a pane's content, inside contentContainer.
+    // Padding around a pane's content, inside root (leading/top; trailing
+    // is capped, not padded, since panes don't have a fixed right edge).
     private static let panePadding: CGFloat = 24
     // Padding around a small group card's rows, inside its own box.
     private static let smallCardPadding: CGFloat = 14
@@ -156,48 +157,37 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         root.fillColor = .controlBackgroundColor
 
         let sidebarCard = buildSidebar()
-        let contentContainer = buildContentContainer()
 
         sidebarCard.translatesAutoresizingMaskIntoConstraints = false
-        contentContainer.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(sidebarCard)
-        root.addSubview(contentContainer)
 
         NSLayoutConstraint.activate([
             sidebarCard.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.cardMargin),
             sidebarCard.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.cardTopMargin),
             sidebarCard.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -Self.cardMargin),
-            sidebarCard.widthAnchor.constraint(equalToConstant: sidebarWidth),
-
-            contentContainer.leadingAnchor.constraint(equalTo: sidebarCard.trailingAnchor, constant: Self.cardGap),
-            contentContainer.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.cardTopMargin),
-            contentContainer.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -Self.cardMargin),
-            contentContainer.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -Self.cardMargin)
+            sidebarCard.widthAnchor.constraint(equalToConstant: sidebarWidth)
         ])
 
-        window?.contentView = root
-    }
-
-    /// Plain, unstyled container for the right-hand pane content — no
-    /// background fill or corner radius of its own; the page's gray shows
-    /// straight through around the small white group cards inside each pane.
-    private func buildContentContainer() -> NSView {
-        let container = NSView()
-
+        // Panes go straight into root — no separate contentContainer
+        // wrapper view. It had no background/corner radius of its own
+        // (the page backdrop shows straight through around it), so it was
+        // adding a layer to the view hierarchy without adding anything
+        // visual; each pane can just carry its own panePadding inset from
+        // root/sidebarCard directly.
         for tab in Tab.allCases {
             let pane = buildPane(for: tab)
             pane.translatesAutoresizingMaskIntoConstraints = false
             pane.isHidden = true
-            container.addSubview(pane)
+            root.addSubview(pane)
             NSLayoutConstraint.activate([
-                pane.topAnchor.constraint(equalTo: container.topAnchor, constant: Self.panePadding),
-                pane.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Self.panePadding),
-                pane.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -Self.panePadding)
+                pane.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.cardTopMargin + Self.panePadding),
+                pane.leadingAnchor.constraint(equalTo: sidebarCard.trailingAnchor, constant: Self.cardGap + Self.panePadding),
+                pane.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -(Self.cardMargin + Self.panePadding))
             ])
             panes[tab] = pane
         }
 
-        return container
+        window?.contentView = root
     }
 
     // MARK: - Sidebar (native NSTableView, .sourceList style)
