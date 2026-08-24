@@ -90,6 +90,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         self.init(window: window)
         buildContent()
         sidebarTableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        // Belt-and-suspenders: at this point the table may not have ever
+        // loaded a row yet, so the selection-changed notification that
+        // would normally refresh each cell's pill isn't guaranteed to have
+        // fired. Forcing a reload here guarantees row 0 shows selected
+        // regardless.
+        sidebarTableView.reloadData()
     }
 
     // MARK: - Window layout
