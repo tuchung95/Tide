@@ -94,6 +94,17 @@ Mỗi lần `./Scripts/build_app.sh` chạy xong, nó **tự publish một GitHu
 - Cách cập nhật khi phát hiện bản mới (`Sources/Tide/UpdateInstaller.swift`): tải file `.zip` đính kèm release → giải nén bằng `ditto` → spawn một shell script tách rời (`sleep 1; rm -rf /Applications/Tide.app; cp -R <bản mới> /Applications/Tide.app; open ...`) → app tự `NSApp.terminate` để script kịp thay thế rồi mở lại. Không cần Sparkle hay framework ngoài — chỉ URLSession + `/usr/bin/ditto` + `/bin/sh`.
 - Vì app hiện ký bằng certificate self-signed (`Tide Local Dev`, không phải Developer ID của Apple) và chưa notarize, macOS Gatekeeper sẽ không tự động tin cậy các máy khác tải bản `.zip` này về — chỉ phù hợp dùng nội bộ giữa các máy đã tự thêm và tin cậy cùng certificate này (xem mục cấp quyền Screen Recording bên trên).
 
+### Cài trên một máy Mac khác
+
+1. Vào [github.com/tuchung95/Tide/releases/latest](https://github.com/tuchung95/Tide/releases/latest), tải file `Tide-vX.Y.Z.zip` đính kèm.
+2. Giải nén, kéo `Tide.app` vào `/Applications`.
+3. Lần mở đầu tiên sẽ bị Gatekeeper chặn ("Apple không thể kiểm tra phần mềm độc hại…") — vì file tải qua trình duyệt bị gắn cờ quarantine và app ký bằng certificate tự tạo, không phải của Apple. Vượt qua bằng 1 trong 2 cách:
+   - Chuột phải (hoặc Control-click) vào `Tide.app` → **Open** → xác nhận **Open** trong hộp thoại.
+   - Hoặc: System Settings → Privacy & Security → cuộn xuống thấy dòng "Tide was blocked from use because it is not from an identified developer" → bấm **Open Anyway**.
+4. Chỉ cần làm bước 3 **một lần duy nhất** cho lần cài đầu. Các bản cập nhật sau đó qua **Check for Updates…** trong app tự tải bằng `URLSession` (không gắn cờ quarantine như tải qua trình duyệt) nên không bị Gatekeeper chặn lại nữa.
+
+> Muốn máy đó không bị chặn ngay cả ở bước 3 (ví dụ định cài đi cài lại nhiều lần để test), copy `tide_dev.key`/`tide_dev.cer` sang máy đó và làm lại đúng các bước ở mục "Giữ quyền Screen Recording qua các lần rebuild" bên trên — máy đó sẽ nhận diện app ký bằng cùng certificate quen thuộc.
+
 ## Cấu trúc mã nguồn
 
 ```
