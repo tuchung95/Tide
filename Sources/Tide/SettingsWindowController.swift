@@ -105,7 +105,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private func buildContent() {
         let root = NSView()
         root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        root.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
 
         let sidebarCard = buildSidebar()
         let contentCard = buildContentCard()
@@ -130,12 +130,13 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         window?.contentView = root
     }
 
-    /// The flat white/rounded card the right-hand pane content sits in —
-    /// as opposed to the sidebar's frosted glass card.
+    /// The flat, light-gray rounded card the right-hand pane content sits
+    /// in — as opposed to the sidebar's frosted glass card and the plain
+    /// white page behind both.
     private func buildContentCard() -> NSView {
         let card = NSView()
         card.wantsLayer = true
-        card.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        card.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         card.layer?.cornerRadius = Self.cardCornerRadius
         card.layer?.masksToBounds = true
 
@@ -158,9 +159,23 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     // MARK: - Sidebar (native NSTableView, .sourceList style)
 
     private func buildSidebar() -> NSView {
+        // The shadow lives on an outer plain wrapper rather than the glass
+        // view itself: the glass view needs masksToBounds = true to clip
+        // its content to the rounded corners, but that would also clip
+        // away any shadow drawn on the same layer (a shadow renders outside
+        // the layer's own bounds).
+        let wrapper = NSView()
+        wrapper.wantsLayer = true
+        wrapper.layer?.shadowColor = NSColor.black.cgColor
+        wrapper.layer?.shadowOpacity = 0.16
+        wrapper.layer?.shadowRadius = 8
+        wrapper.layer?.shadowOffset = .zero
+
         // .sidebar material matches the native translucent gray macOS uses
         // for source lists in both appearances, with no manual color
-        // theming needed.
+        // theming needed. The white border gives it a defined edge now
+        // that the page behind it is white too, not the darker gray it
+        // used to sit on.
         let background = NSVisualEffectView()
         background.material = .sidebar
         background.blendingMode = .behindWindow
@@ -168,6 +183,17 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         background.wantsLayer = true
         background.layer?.cornerRadius = Self.cardCornerRadius
         background.layer?.masksToBounds = true
+        background.layer?.borderWidth = 1
+        background.layer?.borderColor = NSColor.white.withAlphaComponent(0.8).cgColor
+        background.translatesAutoresizingMaskIntoConstraints = false
+
+        wrapper.addSubview(background)
+        NSLayoutConstraint.activate([
+            background.topAnchor.constraint(equalTo: wrapper.topAnchor),
+            background.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+            background.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+            background.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor)
+        ])
 
         let scrollView = NSScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -203,7 +229,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             scrollView.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -7),
             scrollView.bottomAnchor.constraint(equalTo: background.bottomAnchor)
         ])
-        return background
+        return wrapper
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
