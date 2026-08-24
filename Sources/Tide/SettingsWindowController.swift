@@ -103,9 +103,19 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private static let cardTopMargin: CGFloat = 32
 
     private func buildContent() {
-        let root = NSView()
-        root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        // NSBox with `fillColor` rather than a plain NSView with
+        // `layer.backgroundColor = NSColor…cgColor`: the latter resolves
+        // the dynamic system color to a raw CGColor once, at the moment
+        // it's called — before this view is even in a window, so it isn't
+        // resolving against the real current appearance yet — and then
+        // never updates again. NSBox's fillColor is appearance-aware and
+        // keeps resolving correctly, the same way the inner group cards
+        // (makeCard) already do.
+        let root = NSBox()
+        root.boxType = .custom
+        root.borderWidth = 0
+        root.cornerRadius = 0
+        root.fillColor = .controlBackgroundColor
 
         let sidebarCard = buildSidebar()
         let contentCard = buildContentCard()
@@ -134,11 +144,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// in — as opposed to the sidebar's frosted glass card and the plain
     /// white page behind both.
     private func buildContentCard() -> NSView {
-        let card = NSView()
-        card.wantsLayer = true
-        card.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        card.layer?.cornerRadius = Self.cardCornerRadius
-        card.layer?.masksToBounds = true
+        let card = NSBox()
+        card.boxType = .custom
+        card.borderWidth = 0
+        card.cornerRadius = Self.cardCornerRadius
+        card.fillColor = .windowBackgroundColor
 
         for tab in Tab.allCases {
             let pane = buildPane(for: tab)
