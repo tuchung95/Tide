@@ -59,7 +59,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private let sidebarRowHeight: CGFloat = 40
     // Same value on all four sides around the nav item list, inside the
     // sidebar card.
-    private static let sidebarPadding: CGFloat = 8
+    private static let sidebarPadding: CGFloat = 4
 
     private var sidebarTableView: NSTableView!
     private var previouslySelectedSidebarRow: Int?
