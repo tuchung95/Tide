@@ -201,20 +201,17 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // wedges poking past the card's rounded corners.
         wrapper.layer?.cornerRadius = Self.cardCornerRadius
 
-        // .sidebar material matches the native translucent gray macOS uses
-        // for source lists in both appearances, with no manual color
-        // theming needed. The white border gives it a defined edge now
-        // that the page behind it is white too, not the darker gray it
-        // used to sit on.
-        let background = NSVisualEffectView()
-        background.material = .sidebar
-        background.blendingMode = .behindWindow
-        background.state = .active
-        background.wantsLayer = true
-        background.layer?.cornerRadius = Self.cardCornerRadius
-        background.layer?.masksToBounds = true
-        background.layer?.borderWidth = 1
-        background.layer?.borderColor = NSColor.white.withAlphaComponent(0.8).cgColor
+        // Plain solid fill instead of the frosted-glass NSVisualEffectView
+        // this used to be — same F7F7F7 as the small group cards, for a
+        // consistent flat palette. NSBox rather than a layer-backed NSView:
+        // its cornerRadius/borderWidth/borderColor/fillColor all resolve
+        // correctly against the current appearance on their own.
+        let background = NSBox()
+        background.boxType = .custom
+        background.cornerRadius = Self.cardCornerRadius
+        background.borderWidth = 1
+        background.borderColor = NSColor.white.withAlphaComponent(0.8)
+        background.fillColor = Self.smallCardFillColor
         background.translatesAutoresizingMaskIntoConstraints = false
 
         wrapper.addSubview(background)
