@@ -13,13 +13,16 @@ final class ScreenshotManager {
         case fullScreen
 
         var arguments: [String] {
+            // -x mutes screencapture's own default shutter sound — Tide
+            // plays its own (CaptureSound.mp3) once the capture actually
+            // finishes, so without -x the user would hear both.
             switch self {
             case .selection:
-                return ["-i"]
+                return ["-i", "-x"]
             case .window:
-                return ["-i", "-W"]
+                return ["-i", "-W", "-x"]
             case .fullScreen:
-                return []
+                return ["-x"]
             }
         }
     }
