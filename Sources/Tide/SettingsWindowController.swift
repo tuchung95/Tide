@@ -6,7 +6,7 @@ import AppKit
 /// Shortcut persistence/registration is still owned by the app delegate via
 /// `applyShortcutChange`; Save/Copy and Launch at Login are simple enough
 /// to read/write directly from here.
-final class SettingsWindowController: NSWindowController {
+final class SettingsWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
 
     /// Returns true if `combo` (nil means "clear") was applied successfully.
     var applyShortcutChange: ((ShortcutAction, KeyCombo?) -> Bool)?
@@ -35,16 +35,26 @@ final class SettingsWindowController: NSWindowController {
             case .shortcuts: return "keyboard"
             }
         }
+
+        // Matches System Settings' rounded, colored icon "badges".
+        var badgeColor: NSColor {
+            switch self {
+            case .general: return .systemGray
+            case .screenshot: return .systemBlue
+            case .shortcuts: return .systemIndigo
+            }
+        }
     }
 
     private static let captureActions: [ShortcutAction] = [.selectedArea, .window, .fullScreen]
+    private static let sidebarCellIdentifier = NSUserInterfaceItemIdentifier("SidebarCell")
 
-    private let sidebarWidth: CGFloat = 140
+    private let sidebarWidth: CGFloat = 180
     private let labelWidth: CGFloat = 110
     private let checkboxWidth: CGFloat = 50
     private let recorderWidth: CGFloat = 130
 
-    private var sidebarButtons: [Tab: NSButton] = [:]
+    private var sidebarTableView: NSTableView!
     private var panes: [Tab: NSView] = [:]
 
     private var recorders: [ShortcutAction: ShortcutRecorderControl] = [:]
@@ -54,7 +64,7 @@ final class SettingsWindowController: NSWindowController {
 
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 540, height: 320),
+            contentRect: NSRect(x: 0, y: 0, width: 580, height: 320),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -64,7 +74,7 @@ final class SettingsWindowController: NSWindowController {
         window.center()
         self.init(window: window)
         buildContent()
-        select(.general)
+        sidebarTableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
     }
 
     // MARK: - Layout
@@ -108,61 +118,136 @@ final class SettingsWindowController: NSWindowController {
         window?.contentView = root
     }
 
+    /// A real NSTableView in `.sourceList` style — the same native component
+    /// System Settings/Finder/Mail use for their sidebars — rather than a
+    /// hand-rolled button stack, so selection gets the standard rounded
+    /// highlight pill for free instead of an approximation of it.
     private func buildSidebar() -> NSView {
         // .sidebar material matches the native translucent gray macOS uses
-        // for source lists (Finder, Mail, System Settings) in both
-        // appearances, with no manual color theming needed.
+        // for source lists in both appearances, with no manual color
+        // theming needed.
         let background = NSVisualEffectView()
         background.material = .sidebar
         background.blendingMode = .behindWindow
         background.state = .active
 
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 2
-        stack.edgeInsets = NSEdgeInsets(top: 12, left: 8, bottom: 12, right: 8)
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        let scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
 
-        for tab in Tab.allCases {
-            let button = makeSidebarButton(for: tab)
-            sidebarButtons[tab] = button
-            stack.addArrangedSubview(button)
-            button.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
+        let tableView = NSTableView()
+        tableView.style = .sourceList
+        tableView.headerView = nil
+        tableView.backgroundColor = .clear
+        tableView.rowHeight = 32
+        tableView.dataSource = self
+        tableView.delegate = self
 
-        background.addSubview(stack)
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("sidebar"))
+        column.width = sidebarWidth - 16
+        tableView.addTableColumn(column)
+
+        scrollView.documentView = tableView
+        sidebarTableView = tableView
+
+        background.addSubview(scrollView)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: background.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: background.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: background.trailingAnchor)
+            scrollView.topAnchor.constraint(equalTo: background.topAnchor, constant: 8),
+            scrollView.leadingAnchor.constraint(equalTo: background.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: background.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: background.bottomAnchor)
         ])
         return background
     }
 
-    private func makeSidebarButton(for tab: Tab) -> NSButton {
-        let button = NSButton(title: tab.title, target: self, action: #selector(sidebarTapped(_:)))
-        button.image = NSImage(systemSymbolName: tab.symbol, accessibilityDescription: tab.title)
-        button.imagePosition = .imageLeading
-        button.bezelStyle = .recessed
-        button.setButtonType(.pushOnPushOff)
-        button.alignment = .left
-        button.font = NSFont.systemFont(ofSize: 13)
-        button.tag = tab.rawValue
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.heightAnchor.constraint(equalToConstant: 28).isActive = true
-        return button
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        Tab.allCases.count
     }
 
-    @objc private func sidebarTapped(_ sender: NSButton) {
-        guard let tab = Tab(rawValue: sender.tag) else { return }
-        select(tab)
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let cell = (tableView.makeView(withIdentifier: Self.sidebarCellIdentifier, owner: self) as? NSTableCellView)
+            ?? makeSidebarCell()
+
+        let tab = Tab.allCases[row]
+        cell.textField?.stringValue = tab.title
+        cell.imageView?.image = Self.badgeImage(symbol: tab.symbol, color: tab.badgeColor)
+        return cell
     }
 
-    private func select(_ tab: Tab) {
-        for (candidate, button) in sidebarButtons {
-            button.state = (candidate == tab) ? .on : .off
+    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
+        false
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        let row = sidebarTableView.selectedRow
+        guard row >= 0 else { return }
+        showPane(for: Tab.allCases[row])
+    }
+
+    private func makeSidebarCell() -> NSTableCellView {
+        let cell = NSTableCellView()
+        cell.identifier = Self.sidebarCellIdentifier
+
+        let imageView = NSImageView()
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+
+        let textField = NSTextField(labelWithString: "")
+        textField.translatesAutoresizingMaskIntoConstraints = false
+        textField.font = NSFont.systemFont(ofSize: 13)
+
+        cell.addSubview(imageView)
+        cell.addSubview(textField)
+        cell.imageView = imageView
+        cell.textField = textField
+
+        NSLayoutConstraint.activate([
+            imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+            imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            imageView.widthAnchor.constraint(equalToConstant: 20),
+            imageView.heightAnchor.constraint(equalToConstant: 20),
+
+            textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 8),
+            textField.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor),
+            textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
+        ])
+        return cell
+    }
+
+    /// Draws a rounded, colored square with a white SF Symbol centered in
+    /// it — the "badge" look System Settings uses for each sidebar row.
+    private static func badgeImage(symbol: String, color: NSColor, size: CGFloat = 22) -> NSImage {
+        let badge = NSImage(size: NSSize(width: size, height: size))
+        badge.lockFocus()
+
+        let rect = NSRect(x: 0, y: 0, width: size, height: size)
+        color.setFill()
+        NSBezierPath(roundedRect: rect, xRadius: size * 0.24, yRadius: size * 0.24).fill()
+
+        if let symbolImage = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
+            let config = NSImage.SymbolConfiguration(pointSize: size * 0.55, weight: .semibold)
+            let configured = symbolImage.withSymbolConfiguration(config) ?? symbolImage
+            let glyphSize = configured.size
+            let glyphRect = NSRect(
+                x: (size - glyphSize.width) / 2,
+                y: (size - glyphSize.height) / 2,
+                width: glyphSize.width,
+                height: glyphSize.height
+            )
+            // Standard NSImage tint trick: draw the template glyph, then
+            // flood the rect with white using sourceAtop so only the
+            // glyph's existing alpha gets recolored.
+            NSColor.white.set()
+            configured.draw(in: glyphRect)
+            glyphRect.fill(using: .sourceAtop)
         }
+
+        badge.unlockFocus()
+        return badge
+    }
+
+    private func showPane(for tab: Tab) {
         for (candidate, pane) in panes {
             pane.isHidden = (candidate != tab)
         }
