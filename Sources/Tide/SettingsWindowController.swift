@@ -233,6 +233,14 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         tableView.headerView = nil
         tableView.backgroundColor = .clear
         tableView.rowHeight = sidebarRowHeight
+        // The system's own .sourceList selection pill draws at a fixed,
+        // larger corner radius with no public API to change it — and on
+        // this macOS version, overriding NSTableRowView.drawSelection(in:)
+        // didn't intercept it either (still rendered natively), so it's
+        // disabled outright here. The pill is instead drawn as a plain
+        // background view inside each cell, toggled by hand in
+        // tableView(_:viewFor:row:).
+        tableView.selectionHighlightStyle = .none
         // Let the single column track the table's actual width instead of
         // a width computed by hand: with a hardcoded width and no leading
         // inset on the scroll view, the selection pill rendered flush
@@ -264,12 +272,13 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let cell = (tableView.makeView(withIdentifier: Self.sidebarCellIdentifier, owner: self) as? NSTableCellView)
+        let cell = (tableView.makeView(withIdentifier: Self.sidebarCellIdentifier, owner: self) as? SidebarCellView)
             ?? makeSidebarCell()
 
         let tab = Tab.allCases[row]
         cell.textField?.stringValue = tab.title
         cell.imageView?.image = Self.badgeImage(symbol: tab.symbol, color: tab.badgeColor)
+        cell.isRowSelected = (row == tableView.selectedRow)
         return cell
     }
 
@@ -277,27 +286,22 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         false
     }
 
-    /// The system's own `.sourceList` selection pill has a fixed, larger
-    /// corner radius with no public API to change it. A custom row view
-    /// that draws its own selection background is the only way to get a
-    /// specific radius (12px here) instead.
-    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        let identifier = NSUserInterfaceItemIdentifier("SidebarRow")
-        let rowView = (tableView.makeView(withIdentifier: identifier, owner: self) as? RoundedSelectionRowView)
-            ?? RoundedSelectionRowView()
-        rowView.identifier = identifier
-        return rowView
-    }
-
     func tableViewSelectionDidChange(_ notification: Notification) {
         let row = sidebarTableView.selectedRow
         guard row >= 0 else { return }
+        // Native selection drawing is off (selectionHighlightStyle = .none),
+        // so every row's own background pill has to be refreshed by hand —
+        // both the newly selected one and whichever was selected before.
+        sidebarTableView.reloadData()
         showPane(for: Tab.allCases[row])
     }
 
-    private func makeSidebarCell() -> NSTableCellView {
-        let cell = NSTableCellView()
+    private func makeSidebarCell() -> SidebarCellView {
+        let cell = SidebarCellView()
         cell.identifier = Self.sidebarCellIdentifier
+
+        cell.pillBackground.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(cell.pillBackground)
 
         let imageView = NSImageView()
         imageView.translatesAutoresizingMaskIntoConstraints = false
@@ -312,6 +316,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         cell.textField = textField
 
         NSLayoutConstraint.activate([
+            cell.pillBackground.topAnchor.constraint(equalTo: cell.topAnchor),
+            cell.pillBackground.leadingAnchor.constraint(equalTo: cell.leadingAnchor),
+            cell.pillBackground.trailingAnchor.constraint(equalTo: cell.trailingAnchor),
+            cell.pillBackground.bottomAnchor.constraint(equalTo: cell.bottomAnchor),
+
             // Same inset as the card's own outer padding (sidebarPadding),
             // rather than an unrelated one-off value.
             imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: Self.sidebarPadding),
@@ -657,14 +666,22 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     }
 }
 
-/// Draws the sidebar's selection pill itself, at a 12px corner radius,
-/// instead of the system's default `.sourceList` selection (whose radius
-/// isn't exposed via any public property).
-private final class RoundedSelectionRowView: NSTableRowView {
-    override func drawSelection(in dirtyRect: NSRect) {
-        guard selectionHighlightStyle != .none else { return }
-        let path = NSBezierPath(roundedRect: bounds, xRadius: 12, yRadius: 12)
-        NSColor.controlAccentColor.setFill()
-        path.fill()
+/// A sidebar row cell with its own selection "pill" background, drawn at a
+/// fixed 12px corner radius — the table's native selectionHighlightStyle
+/// is off (see buildSidebar), so this is the only thing drawing it.
+private final class SidebarCellView: NSTableCellView {
+    let pillBackground: NSBox = {
+        let box = NSBox()
+        box.boxType = .custom
+        box.borderWidth = 0
+        box.cornerRadius = 12
+        box.fillColor = .clear
+        return box
+    }()
+
+    var isRowSelected = false {
+        didSet {
+            pillBackground.fillColor = isRowSelected ? .controlAccentColor : .clear
+        }
     }
 }
