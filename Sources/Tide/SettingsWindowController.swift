@@ -102,7 +102,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// split view.
     private static let cardMargin: CGFloat = 10
     private static let cardGap: CGFloat = 10
-    private static let cardCornerRadius: CGFloat = 10
+    private static let cardCornerRadius: CGFloat = 24
     // Bigger top inset than the other edges: with fullSizeContentView the
     // content area starts at the very top of the window, right where the
     // traffic-light buttons sit — a plain 10pt margin would run the
@@ -186,9 +186,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         let wrapper = NSView()
         wrapper.wantsLayer = true
         wrapper.layer?.shadowColor = NSColor.black.cgColor
-        wrapper.layer?.shadowOpacity = 0.16
-        wrapper.layer?.shadowRadius = 8
-        wrapper.layer?.shadowOffset = .zero
+        wrapper.layer?.shadowOpacity = 0.28
+        wrapper.layer?.shadowRadius = 14
+        wrapper.layer?.shadowOffset = NSSize(width: 0, height: -3)
         // Without an explicit shadowPath, CALayer derives the shadow's
         // shape from the layer's own bounds + cornerRadius. The wrapper
         // itself was still a plain rectangle (masksToBounds is off here on
