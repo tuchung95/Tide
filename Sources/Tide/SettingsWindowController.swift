@@ -371,7 +371,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         box.boxType = .custom
         box.cornerRadius = 10
         box.borderWidth = 0
-        box.fillColor = .controlBackgroundColor
+        // Now that the page itself is pure white, the card needs its own
+        // gray fill to read as a distinct card at all — controlBackgroundColor
+        // (also white) was flush with the page and invisible.
+        box.fillColor = .windowBackgroundColor
         box.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView()
