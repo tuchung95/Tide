@@ -255,6 +255,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         tableView.headerView = nil
         tableView.backgroundColor = .clear
         tableView.rowHeight = sidebarRowHeight
+        // Default intercellSpacing (3, 2) leaves a horizontal gap between
+        // the column and the row's own content, so the pill never reaches
+        // the card's edges even though its constraints pin to cell edges.
+        tableView.intercellSpacing = NSSize(width: 0, height: 0)
         // The system's own .sourceList selection pill draws at a fixed,
         // larger corner radius with no public API to change it — and on
         // this macOS version, overriding NSTableRowView.drawSelection(in:)
