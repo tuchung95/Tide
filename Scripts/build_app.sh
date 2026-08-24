@@ -1,24 +1,33 @@
 #!/bin/bash
-# Builds Tide in release mode and packages it as Tide.app so it can be
-# double-clicked, added to Login Items, and shows no Dock icon.
+# Builds Tide and packages it as Tide.app so it can be double-clicked,
+# added to Login Items, and shows no Dock icon.
+#
+# Compiles directly with swiftc rather than `swift build`: SwiftPM's
+# manifest resolution needs the platform SDK path from a full Xcode.app
+# install (`xcrun --show-sdk-platform-path`), which isn't available with
+# just the Command Line Tools. swiftc doesn't need it.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-echo "Building release binary..."
-swift build -c release
-
 APP_NAME="Tide"
-BUILD_DIR=".build/release"
 APP_BUNDLE="${APP_NAME}.app"
+SOURCES=(Sources/Tide/*.swift)
+
+echo "Compiling release binary..."
+mkdir -p .build/release
+swiftc -O -whole-module-optimization \
+    -o ".build/release/${APP_NAME}" \
+    "${SOURCES[@]}"
 
 echo "Assembling ${APP_BUNDLE}..."
 rm -rf "${APP_BUNDLE}"
 mkdir -p "${APP_BUNDLE}/Contents/MacOS"
 mkdir -p "${APP_BUNDLE}/Contents/Resources"
 
-cp "${BUILD_DIR}/${APP_NAME}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
+cp ".build/release/${APP_NAME}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 cp "Resources/Info.plist" "${APP_BUNDLE}/Contents/Info.plist"
+cp "Resources/AppIcon.icns" "${APP_BUNDLE}/Contents/Resources/AppIcon.icns"
 
 echo "Ad-hoc code signing..."
 codesign --force --deep --sign - "${APP_BUNDLE}"

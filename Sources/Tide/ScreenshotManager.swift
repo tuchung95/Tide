@@ -32,9 +32,9 @@ final class ScreenshotManager {
     private let screenshotsDirectory: URL
 
     init() {
-        let picturesDirectory = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
+        let desktopDirectory = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser
-        screenshotsDirectory = picturesDirectory.appendingPathComponent("Tide Screenshots", isDirectory: true)
+        screenshotsDirectory = desktopDirectory
         try? FileManager.default.createDirectory(at: screenshotsDirectory, withIntermediateDirectories: true)
     }
 
@@ -49,10 +49,8 @@ final class ScreenshotManager {
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
         process.arguments = mode.arguments + [destination.path]
 
-        process.terminationHandler = { [weak self] finishedProcess in
+        process.terminationHandler = { finishedProcess in
             DispatchQueue.main.async {
-                guard let self else { return }
-
                 let fileExists = FileManager.default.fileExists(atPath: destination.path)
 
                 // Interactive captures return a non-zero status when the
@@ -92,10 +90,6 @@ final class ScreenshotManager {
                 completion(.failure(error))
             }
         }
-    }
-
-    func revealScreenshotsFolder() {
-        NSWorkspace.shared.open(screenshotsDirectory)
     }
 
     private static func timestampedFilename() -> String {
