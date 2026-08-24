@@ -102,7 +102,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// split view.
     private static let cardMargin: CGFloat = 10
     private static let cardGap: CGFloat = 10
-    private static let cardCornerRadius: CGFloat = 24
+    // Shared by every card — sidebar and the small group cards alike.
+    private static let cardCornerRadius: CGFloat = 32
     // Bigger top inset than the other edges: with fullSizeContentView the
     // content area starts at the very top of the window, right where the
     // traffic-light buttons sit — a plain 10pt margin would run the
@@ -392,7 +393,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private func makeCard(rows: [NSView]) -> NSView {
         let box = NSBox()
         box.boxType = .custom
-        box.cornerRadius = 10
+        box.cornerRadius = Self.cardCornerRadius
         box.borderWidth = 0
         // Now that the page itself is pure white, the card needs its own
         // gray fill to read as a distinct card at all — controlBackgroundColor
