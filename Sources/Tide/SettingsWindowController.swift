@@ -179,7 +179,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         tableView.style = .sourceList
         tableView.headerView = nil
         tableView.backgroundColor = .clear
-        tableView.rowHeight = 32
+        tableView.rowHeight = 36
         // Let the single column track the table's actual width instead of
         // a width computed by hand: with a hardcoded width and no leading
         // inset on the scroll view, the selection pill rendered flush
@@ -249,8 +249,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         NSLayoutConstraint.activate([
             imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
             imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            imageView.widthAnchor.constraint(equalToConstant: 20),
-            imageView.heightAnchor.constraint(equalToConstant: 20),
+            imageView.widthAnchor.constraint(equalToConstant: 24),
+            imageView.heightAnchor.constraint(equalToConstant: 24),
 
             textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 8),
             textField.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor),
@@ -267,7 +267,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// background rect white, not just the glyph, since sourceAtop only
     /// looks at destination alpha — and the background is opaque
     /// everywhere.
-    private static func badgeImage(symbol: String, color: NSColor, size: CGFloat = 22) -> NSImage {
+    private static func badgeImage(symbol: String, color: NSColor, size: CGFloat = 24) -> NSImage {
         let badge = NSImage(size: NSSize(width: size, height: size))
         badge.lockFocus()
         let rect = NSRect(x: 0, y: 0, width: size, height: size)
