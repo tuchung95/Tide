@@ -100,6 +100,14 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private static let cardMargin: CGFloat = 10
     private static let cardGap: CGFloat = 10
     private static let cardCornerRadius: CGFloat = 10
+    /// #F9F9F9 in Light Mode, with a dynamic provider so it still adapts
+    /// to a reasonable dark-mode value instead of staying frozen light.
+    private static let pageFillColor = NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return isDark
+            ? NSColor(white: 0.12, alpha: 1)
+            : NSColor(srgbRed: 0xF9 / 255, green: 0xF9 / 255, blue: 0xF9 / 255, alpha: 1)
+    }
     // Bigger top inset than the other edges: with fullSizeContentView the
     // content area starts at the very top of the window, right where the
     // traffic-light buttons sit — a plain 10pt margin would run the
@@ -115,19 +123,15 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // never updates again. NSBox's fillColor is appearance-aware and
         // keeps resolving correctly, the same way the inner group cards
         // (makeCard) already do.
-        // The whole page is a plain white backdrop — the content side has
-        // no separate boxed/rounded fill of its own, this same white shows
+        // The whole page is a plain backdrop — the content side has no
+        // separate boxed/rounded fill of its own, this same color shows
         // straight through around the small group cards. Only the sidebar
-        // remains a distinct floating card, in glass. controlBackgroundColor
-        // rather than literal white/#fff: it resolves to true white
-        // (255,255,255) in light mode too, but — unlike a hardcoded
-        // NSColor — still adapts correctly if the system is ever in Dark
-        // Mode instead of staying frozen white.
+        // remains a distinct floating card, in glass.
         let root = NSBox()
         root.boxType = .custom
         root.borderWidth = 0
         root.cornerRadius = 0
-        root.fillColor = .controlBackgroundColor
+        root.fillColor = Self.pageFillColor
 
         let sidebarCard = buildSidebar()
         let contentContainer = buildContentContainer()
@@ -137,17 +141,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         root.addSubview(sidebarCard)
         root.addSubview(contentContainer)
 
-        // Height fits exactly the nav items + equal padding on all sides —
-        // not stretched down to the window's bottom edge. With only 3 items
-        // and a plain white page behind it (no longer a similar gray that
-        // hid the seam), a full-height sidebar left a large empty gray
-        // rectangle below the last item that read as broken.
-        let sidebarHeight = Self.sidebarPadding * 2 + CGFloat(Tab.allCases.count) * sidebarRowHeight
-
         NSLayoutConstraint.activate([
             sidebarCard.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.cardMargin),
             sidebarCard.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.cardTopMargin),
-            sidebarCard.heightAnchor.constraint(equalToConstant: sidebarHeight),
+            sidebarCard.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -Self.cardMargin),
             sidebarCard.widthAnchor.constraint(equalToConstant: sidebarWidth),
 
             contentContainer.leadingAnchor.constraint(equalTo: sidebarCard.trailingAnchor, constant: Self.cardGap),
@@ -195,6 +192,14 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         wrapper.layer?.shadowOpacity = 0.16
         wrapper.layer?.shadowRadius = 8
         wrapper.layer?.shadowOffset = .zero
+        // Without an explicit shadowPath, CALayer derives the shadow's
+        // shape from the layer's own bounds + cornerRadius. The wrapper
+        // itself was still a plain rectangle (masksToBounds is off here on
+        // purpose, so the shadow can render outside its bounds), so its
+        // shadow followed square corners while the glass card underneath
+        // is rounded — the mismatch showed as small gray triangular
+        // wedges poking past the card's rounded corners.
+        wrapper.layer?.cornerRadius = Self.cardCornerRadius
 
         // .sidebar material matches the native translucent gray macOS uses
         // for source lists in both appearances, with no manual color
@@ -298,13 +303,15 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         cell.textField = textField
 
         NSLayoutConstraint.activate([
-            imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+            // Same inset as the card's own outer padding (sidebarPadding),
+            // rather than an unrelated one-off value.
+            imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: Self.sidebarPadding),
             imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             imageView.widthAnchor.constraint(equalToConstant: 24),
             imageView.heightAnchor.constraint(equalToConstant: 24),
 
             textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 8),
-            textField.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor),
+            textField.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -Self.sidebarPadding),
             textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
         ])
         return cell
