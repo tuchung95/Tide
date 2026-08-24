@@ -65,7 +65,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     convenience init() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 360),
-            styleMask: [.titled, .closable],
+            styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -73,8 +73,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // System Settings itself never shows a title next to the traffic
         // lights when a sidebar + pane is on screen; the bold in-pane
         // heading already says which tab is showing, so a title bar label
-        // here would just duplicate it.
+        // here would just duplicate it. fullSizeContentView + a transparent
+        // titlebar let the two content cards extend up near the traffic
+        // lights instead of starting below a separate gray titlebar strip.
         window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
         window.center()
         self.init(window: window)
@@ -84,43 +87,72 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     // MARK: - Window layout
 
-    private func buildContent() {
-        let sidebar = buildSidebar()
+    /// System Settings' current layout isn't a sidebar flush against the
+    /// window edges: both the sidebar and the content pane are separate
+    /// floating rounded cards — sidebar in frosted glass, content in a
+    /// flat white card — sitting with a margin on a plain white/light
+    /// window backdrop. This mirrors that rather than one edge-to-edge
+    /// split view.
+    private static let cardMargin: CGFloat = 10
+    private static let cardGap: CGFloat = 10
+    private static let cardCornerRadius: CGFloat = 10
+    // Bigger top inset than the other edges: with fullSizeContentView the
+    // content area starts at the very top of the window, right where the
+    // traffic-light buttons sit — a plain 10pt margin would run the
+    // sidebar's first row straight under them.
+    private static let cardTopMargin: CGFloat = 32
 
-        let contentContainer = NSView()
-        contentContainer.translatesAutoresizingMaskIntoConstraints = false
+    private func buildContent() {
+        let root = NSView()
+        root.wantsLayer = true
+        root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+
+        let sidebarCard = buildSidebar()
+        let contentCard = buildContentCard()
+
+        sidebarCard.translatesAutoresizingMaskIntoConstraints = false
+        contentCard.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(sidebarCard)
+        root.addSubview(contentCard)
+
+        NSLayoutConstraint.activate([
+            sidebarCard.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.cardMargin),
+            sidebarCard.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.cardTopMargin),
+            sidebarCard.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -Self.cardMargin),
+            sidebarCard.widthAnchor.constraint(equalToConstant: sidebarWidth),
+
+            contentCard.leadingAnchor.constraint(equalTo: sidebarCard.trailingAnchor, constant: Self.cardGap),
+            contentCard.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.cardTopMargin),
+            contentCard.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -Self.cardMargin),
+            contentCard.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -Self.cardMargin)
+        ])
+
+        window?.contentView = root
+    }
+
+    /// The flat white/rounded card the right-hand pane content sits in —
+    /// as opposed to the sidebar's frosted glass card.
+    private func buildContentCard() -> NSView {
+        let card = NSView()
+        card.wantsLayer = true
+        card.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        card.layer?.cornerRadius = Self.cardCornerRadius
+        card.layer?.masksToBounds = true
 
         for tab in Tab.allCases {
             let pane = buildPane(for: tab)
             pane.translatesAutoresizingMaskIntoConstraints = false
             pane.isHidden = true
-            contentContainer.addSubview(pane)
+            card.addSubview(pane)
             NSLayoutConstraint.activate([
-                pane.topAnchor.constraint(equalTo: contentContainer.topAnchor, constant: 24),
-                pane.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: 24),
-                pane.trailingAnchor.constraint(lessThanOrEqualTo: contentContainer.trailingAnchor, constant: -24)
+                pane.topAnchor.constraint(equalTo: card.topAnchor, constant: 24),
+                pane.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 24),
+                pane.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -24)
             ])
             panes[tab] = pane
         }
 
-        let root = NSView()
-        sidebar.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(sidebar)
-        root.addSubview(contentContainer)
-
-        NSLayoutConstraint.activate([
-            sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            sidebar.topAnchor.constraint(equalTo: root.topAnchor),
-            sidebar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            sidebar.widthAnchor.constraint(equalToConstant: sidebarWidth),
-
-            contentContainer.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
-            contentContainer.topAnchor.constraint(equalTo: root.topAnchor),
-            contentContainer.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            contentContainer.bottomAnchor.constraint(equalTo: root.bottomAnchor)
-        ])
-
-        window?.contentView = root
+        return card
     }
 
     // MARK: - Sidebar (native NSTableView, .sourceList style)
@@ -133,6 +165,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         background.material = .sidebar
         background.blendingMode = .behindWindow
         background.state = .active
+        background.wantsLayer = true
+        background.layer?.cornerRadius = Self.cardCornerRadius
+        background.layer?.masksToBounds = true
 
         let scrollView = NSScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
