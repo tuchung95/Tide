@@ -277,6 +277,18 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         false
     }
 
+    /// The system's own `.sourceList` selection pill has a fixed, larger
+    /// corner radius with no public API to change it. A custom row view
+    /// that draws its own selection background is the only way to get a
+    /// specific radius (12px here) instead.
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let identifier = NSUserInterfaceItemIdentifier("SidebarRow")
+        let rowView = (tableView.makeView(withIdentifier: identifier, owner: self) as? RoundedSelectionRowView)
+            ?? RoundedSelectionRowView()
+        rowView.identifier = identifier
+        return rowView
+    }
+
     func tableViewSelectionDidChange(_ notification: Notification) {
         let row = sidebarTableView.selectedRow
         guard row >= 0 else { return }
@@ -327,7 +339,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         badge.lockFocus()
         let rect = NSRect(x: 0, y: 0, width: size, height: size)
         color.setFill()
-        NSBezierPath(roundedRect: rect, xRadius: 12, yRadius: 12).fill()
+        NSBezierPath(roundedRect: rect, xRadius: size * 0.24, yRadius: size * 0.24).fill()
         badge.unlockFocus()
 
         guard let symbolImage = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) else {
@@ -642,5 +654,17 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
                 recorders[action]?.combo = combo
             }
         }
+    }
+}
+
+/// Draws the sidebar's selection pill itself, at a 12px corner radius,
+/// instead of the system's default `.sourceList` selection (whose radius
+/// isn't exposed via any public property).
+private final class RoundedSelectionRowView: NSTableRowView {
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard selectionHighlightStyle != .none else { return }
+        let path = NSBezierPath(roundedRect: bounds, xRadius: 12, yRadius: 12)
+        NSColor.controlAccentColor.setFill()
+        path.fill()
     }
 }
