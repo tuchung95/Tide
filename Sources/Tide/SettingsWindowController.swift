@@ -455,12 +455,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
             if index < rows.count - 1 {
                 // .separator boxType draws at the system's full separator
-                // opacity; a plain custom fill at a lower alpha reads as a
-                // fainter hairline instead.
+                // opacity; a flat light gray-white reads as a fainter
+                // hairline instead.
                 let divider = NSBox()
                 divider.boxType = .custom
                 divider.borderWidth = 0
-                divider.fillColor = NSColor.separatorColor.withAlphaComponent(0.4)
+                divider.fillColor = NSColor(white: 0.88, alpha: 1)
                 divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
                 stack.addArrangedSubview(divider)
             }
