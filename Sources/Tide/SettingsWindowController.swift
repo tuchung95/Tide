@@ -62,6 +62,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private static let sidebarPadding: CGFloat = 8
 
     private var sidebarTableView: NSTableView!
+    private var previouslySelectedSidebarRow: Int?
     private var panes: [Tab: NSView] = [:]
 
     private var recorders: [ShortcutAction: ShortcutRecorderControl] = [:]
@@ -89,13 +90,17 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         window.center()
         self.init(window: window)
         buildContent()
-        sidebarTableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-        // Belt-and-suspenders: at this point the table may not have ever
-        // loaded a row yet, so the selection-changed notification that
-        // would normally refresh each cell's pill isn't guaranteed to have
-        // fired. Forcing a reload here guarantees row 0 shows selected
-        // regardless.
+        // Full reloadData() first so the table actually has its 3 rows
+        // before selecting — and notably NOT called again after selecting:
+        // a full reload can itself clear the selection it just set,
+        // wiping out row 0's pill again immediately.
         sidebarTableView.reloadData()
+        sidebarTableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        previouslySelectedSidebarRow = 0
+        // Belt-and-suspenders in case the selection-changed notification
+        // didn't fire for this first selection: force just this one row's
+        // cell to redraw with the correct pill state.
+        sidebarTableView.reloadData(forRowIndexes: IndexSet(integer: 0), columnIndexes: IndexSet(integer: 0))
     }
 
     // MARK: - Window layout
@@ -295,10 +300,21 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     func tableViewSelectionDidChange(_ notification: Notification) {
         let row = sidebarTableView.selectedRow
         guard row >= 0 else { return }
+
         // Native selection drawing is off (selectionHighlightStyle = .none),
         // so every row's own background pill has to be refreshed by hand —
         // both the newly selected one and whichever was selected before.
-        sidebarTableView.reloadData()
+        // Targeted reloadData(forRowIndexes:) rather than a full
+        // reloadData(): a full reload can itself clear the very selection
+        // that triggered this callback, making the pill vanish immediately
+        // after appearing.
+        var rowsToRefresh = IndexSet(integer: row)
+        if let previous = previouslySelectedSidebarRow {
+            rowsToRefresh.insert(previous)
+        }
+        sidebarTableView.reloadData(forRowIndexes: rowsToRefresh, columnIndexes: IndexSet(integer: 0))
+        previouslySelectedSidebarRow = row
+
         showPane(for: Tab.allCases[row])
     }
 
