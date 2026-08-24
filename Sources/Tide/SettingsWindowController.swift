@@ -54,12 +54,15 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private let sidebarWidth: CGFloat = 220
     private let rowHeight: CGFloat = 40
     // 24pt icon + 8pt above/below = 40pt, so each item's vertical padding
-    // matches its horizontal padding (sidebarPadding) instead of the ~6pt
-    // it worked out to before.
+    // matches its horizontal padding (sidebarItemPadding) instead of the
+    // ~6pt it worked out to before.
     private let sidebarRowHeight: CGFloat = 40
-    // Same value on all four sides around the nav item list, inside the
-    // sidebar card.
-    private static let sidebarPadding: CGFloat = 8
+    // Gap between the item list (scrollView) and the sidebar card's own
+    // edges — independent from sidebarItemPadding below, even though both
+    // happen to be 8pt right now.
+    private static let sidebarListInset: CGFloat = 8
+    // Padding around each item's own content (icon/text) within its row.
+    private static let sidebarItemPadding: CGFloat = 8
 
     private var sidebarTableView: NSTableView!
     private var previouslySelectedSidebarRow: Int?
@@ -270,10 +273,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         background.addSubview(scrollView)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: background.topAnchor, constant: Self.sidebarPadding),
-            scrollView.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: Self.sidebarPadding),
-            scrollView.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -Self.sidebarPadding),
-            scrollView.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -Self.sidebarPadding)
+            scrollView.topAnchor.constraint(equalTo: background.topAnchor, constant: Self.sidebarListInset),
+            scrollView.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: Self.sidebarListInset),
+            scrollView.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -Self.sidebarListInset),
+            scrollView.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -Self.sidebarListInset)
         ])
         return wrapper
     }
@@ -343,15 +346,13 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             cell.pillBackground.trailingAnchor.constraint(equalTo: cell.trailingAnchor),
             cell.pillBackground.bottomAnchor.constraint(equalTo: cell.bottomAnchor),
 
-            // Same inset as the card's own outer padding (sidebarPadding),
-            // rather than an unrelated one-off value.
-            imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: Self.sidebarPadding),
+            imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: Self.sidebarItemPadding),
             imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             imageView.widthAnchor.constraint(equalToConstant: 24),
             imageView.heightAnchor.constraint(equalToConstant: 24),
 
             textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 8),
-            textField.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -Self.sidebarPadding),
+            textField.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -Self.sidebarItemPadding),
             textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
         ])
         return cell
