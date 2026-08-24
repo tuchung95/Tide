@@ -1,8 +1,10 @@
 import AppKit
 
-/// The "Settings…" window, laid out as a macOS System Settings–style
-/// sidebar with one tab per functional area: General (Launch at Login +
-/// updates), Screenshot (Save/Copy toggles), Shortcuts (global hotkeys).
+/// The "Settings…" window, laid out to match macOS System Settings: a real
+/// NSTableView sidebar in `.sourceList` style with rounded icon badges, and
+/// content panes built from rounded "card" groups (NSBox) with NSSwitch
+/// toggles and hairline dividers between rows — the same visual language
+/// System Settings itself uses, rather than a generic checkbox form.
 /// Shortcut persistence/registration is still owned by the app delegate via
 /// `applyShortcutChange`; Save/Copy and Launch at Login are simple enough
 /// to read/write directly from here.
@@ -30,9 +32,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         var symbol: String {
             switch self {
-            case .general: return "gearshape"
+            case .general: return "gearshape.fill"
             case .screenshot: return "camera.viewfinder"
-            case .shortcuts: return "keyboard"
+            case .shortcuts: return "keyboard.fill"
             }
         }
 
@@ -50,21 +52,19 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private static let sidebarCellIdentifier = NSUserInterfaceItemIdentifier("SidebarCell")
 
     private let sidebarWidth: CGFloat = 180
-    private let labelWidth: CGFloat = 110
-    private let checkboxWidth: CGFloat = 50
-    private let recorderWidth: CGFloat = 130
+    private let rowHeight: CGFloat = 40
 
     private var sidebarTableView: NSTableView!
     private var panes: [Tab: NSView] = [:]
 
     private var recorders: [ShortcutAction: ShortcutRecorderControl] = [:]
-    private var saveCheckboxes: [ShortcutAction: NSButton] = [:]
-    private var copyCheckboxes: [ShortcutAction: NSButton] = [:]
-    private var launchAtLoginCheckbox: NSButton!
+    private var saveSwitches: [ShortcutAction: NSSwitch] = [:]
+    private var copySwitches: [ShortcutAction: NSSwitch] = [:]
+    private var launchAtLoginSwitch: NSSwitch!
 
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 580, height: 320),
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 360),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -77,7 +77,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         sidebarTableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
     }
 
-    // MARK: - Layout
+    // MARK: - Window layout
 
     private func buildContent() {
         let sidebar = buildSidebar()
@@ -118,10 +118,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         window?.contentView = root
     }
 
-    /// A real NSTableView in `.sourceList` style — the same native component
-    /// System Settings/Finder/Mail use for their sidebars — rather than a
-    /// hand-rolled button stack, so selection gets the standard rounded
-    /// highlight pill for free instead of an approximation of it.
+    // MARK: - Sidebar (native NSTableView, .sourceList style)
+
     private func buildSidebar() -> NSView {
         // .sidebar material matches the native translucent gray macOS uses
         // for source lists in both appearances, with no manual color
@@ -217,33 +215,44 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     /// Draws a rounded, colored square with a white SF Symbol centered in
     /// it — the "badge" look System Settings uses for each sidebar row.
+    /// The glyph is tinted white on its own isolated, transparent canvas
+    /// first: doing the sourceAtop white fill directly against the colored
+    /// background (as a single pass) recolors the *entire* opaque
+    /// background rect white, not just the glyph, since sourceAtop only
+    /// looks at destination alpha — and the background is opaque
+    /// everywhere.
     private static func badgeImage(symbol: String, color: NSColor, size: CGFloat = 22) -> NSImage {
         let badge = NSImage(size: NSSize(width: size, height: size))
         badge.lockFocus()
-
         let rect = NSRect(x: 0, y: 0, width: size, height: size)
         color.setFill()
         NSBezierPath(roundedRect: rect, xRadius: size * 0.24, yRadius: size * 0.24).fill()
-
-        if let symbolImage = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
-            let config = NSImage.SymbolConfiguration(pointSize: size * 0.55, weight: .semibold)
-            let configured = symbolImage.withSymbolConfiguration(config) ?? symbolImage
-            let glyphSize = configured.size
-            let glyphRect = NSRect(
-                x: (size - glyphSize.width) / 2,
-                y: (size - glyphSize.height) / 2,
-                width: glyphSize.width,
-                height: glyphSize.height
-            )
-            // Standard NSImage tint trick: draw the template glyph, then
-            // flood the rect with white using sourceAtop so only the
-            // glyph's existing alpha gets recolored.
-            NSColor.white.set()
-            configured.draw(in: glyphRect)
-            glyphRect.fill(using: .sourceAtop)
-        }
-
         badge.unlockFocus()
+
+        guard let symbolImage = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) else {
+            return badge
+        }
+        let config = NSImage.SymbolConfiguration(pointSize: size * 0.55, weight: .semibold)
+        let configured = symbolImage.withSymbolConfiguration(config) ?? symbolImage
+        let glyphSize = configured.size
+
+        let whiteGlyph = NSImage(size: glyphSize)
+        whiteGlyph.lockFocus()
+        configured.draw(at: .zero, from: .zero, operation: .sourceOver, fraction: 1)
+        NSColor.white.set()
+        NSRect(origin: .zero, size: glyphSize).fill(using: .sourceAtop)
+        whiteGlyph.unlockFocus()
+
+        badge.lockFocus()
+        let glyphRect = NSRect(
+            x: (size - glyphSize.width) / 2,
+            y: (size - glyphSize.height) / 2,
+            width: glyphSize.width,
+            height: glyphSize.height
+        )
+        whiteGlyph.draw(in: glyphRect)
+        badge.unlockFocus()
+
         return badge
     }
 
@@ -262,37 +271,104 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         }
     }
 
+    // MARK: - Shared pane chrome (title + card group)
+
+    private func makePaneTitle(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = NSFont.systemFont(ofSize: 20, weight: .semibold)
+        return label
+    }
+
+    /// A rounded, filled group box with hairline dividers between its rows
+    /// — System Settings' basic building block for every pane.
+    private func makeCard(rows: [NSView]) -> NSView {
+        let box = NSBox()
+        box.boxType = .custom
+        box.cornerRadius = 10
+        box.borderWidth = 0
+        box.fillColor = .controlBackgroundColor
+        box.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 0
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        for (index, row) in rows.enumerated() {
+            row.translatesAutoresizingMaskIntoConstraints = false
+            stack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+            if index < rows.count - 1 {
+                let divider = NSBox()
+                divider.boxType = .separator
+                stack.addArrangedSubview(divider)
+            }
+        }
+
+        box.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: box.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -14),
+            stack.bottomAnchor.constraint(equalTo: box.bottomAnchor)
+        ])
+        return box
+    }
+
+    /// A fixed-height row with a leading view pinned left and a trailing
+    /// view pinned right, both vertically centered — the standard "label
+    /// … control" row shape used throughout System Settings.
+    private func makeRow(leading: NSView, trailing: NSView) -> NSView {
+        let row = NSView()
+        row.heightAnchor.constraint(equalToConstant: rowHeight).isActive = true
+
+        leading.translatesAutoresizingMaskIntoConstraints = false
+        trailing.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(leading)
+        row.addSubview(trailing)
+
+        NSLayoutConstraint.activate([
+            leading.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            leading.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+
+            trailing.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            trailing.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            trailing.leadingAnchor.constraint(greaterThanOrEqualTo: leading.trailingAnchor, constant: 8)
+        ])
+        return row
+    }
+
     // MARK: - General pane
 
     private func buildGeneralPane() -> NSView {
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 14
+        stack.spacing = 16
 
-        launchAtLoginCheckbox = NSButton(checkboxWithTitle: "Launch at Login", target: self, action: #selector(toggleLaunchAtLogin))
-        launchAtLoginCheckbox.state = LoginItemManager.isEnabled ? .on : .off
-        stack.addArrangedSubview(launchAtLoginCheckbox)
+        stack.addArrangedSubview(makePaneTitle("General"))
 
-        let updateRow = NSStackView()
-        updateRow.orientation = .horizontal
-        updateRow.spacing = 8
+        launchAtLoginSwitch = NSSwitch()
+        launchAtLoginSwitch.state = LoginItemManager.isEnabled ? .on : .off
+        launchAtLoginSwitch.target = self
+        launchAtLoginSwitch.action = #selector(toggleLaunchAtLogin(_:))
+        let launchRow = makeRow(leading: NSTextField(labelWithString: "Launch at Login"), trailing: launchAtLoginSwitch)
 
         let versionLabel = NSTextField(labelWithString: "Version \(Self.currentVersion)")
         versionLabel.textColor = .secondaryLabelColor
-        versionLabel.font = NSFont.systemFont(ofSize: 11)
-
         let checkUpdatesButton = NSButton(title: "Check for Updates…", target: self, action: #selector(checkForUpdatesTapped))
         checkUpdatesButton.bezelStyle = .rounded
+        let updateRow = makeRow(leading: versionLabel, trailing: checkUpdatesButton)
 
-        updateRow.addArrangedSubview(versionLabel)
-        updateRow.addArrangedSubview(checkUpdatesButton)
-        stack.addArrangedSubview(updateRow)
+        let card = makeCard(rows: [launchRow, updateRow])
+        card.widthAnchor.constraint(equalToConstant: 460).isActive = true
+        stack.addArrangedSubview(card)
 
         return stack
     }
 
-    @objc private func toggleLaunchAtLogin(_ sender: NSButton) {
+    @objc private func toggleLaunchAtLogin(_ sender: NSSwitch) {
         LoginItemManager.isEnabled = sender.state == .on
     }
 
@@ -312,10 +388,13 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         stack.alignment = .leading
         stack.spacing = 10
 
-        stack.addArrangedSubview(makeColumnHeaderRow(columns: [("Save", checkboxWidth), ("Copy", checkboxWidth)]))
-        for action in Self.captureActions {
-            stack.addArrangedSubview(makeScreenshotRow(for: action))
-        }
+        stack.addArrangedSubview(makePaneTitle("Screenshot"))
+        stack.setCustomSpacing(16, after: stack.arrangedSubviews.last!)
+
+        let rows = Self.captureActions.map { makeScreenshotRow(for: $0) }
+        let card = makeCard(rows: rows)
+        card.widthAnchor.constraint(equalToConstant: 460).isActive = true
+        stack.addArrangedSubview(card)
 
         let resetButton = NSButton(title: "Restore Defaults", target: self, action: #selector(restoreScreenshotDefaults))
         resetButton.bezelStyle = .rounded
@@ -324,70 +403,39 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         return stack
     }
 
-    private func makeColumnHeaderRow(columns: [(title: String, width: CGFloat)]) -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.spacing = 8
-
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.widthAnchor.constraint(equalToConstant: labelWidth).isActive = true
-        row.addArrangedSubview(spacer)
-
-        for column in columns {
-            row.addArrangedSubview(makeCaptionLabel(column.title, width: column.width))
-        }
-        return row
-    }
-
-    private func makeCaptionLabel(_ title: String, width: CGFloat) -> NSTextField {
-        let label = NSTextField(labelWithString: title)
-        label.font = NSFont.systemFont(ofSize: 10)
-        label.textColor = .tertiaryLabelColor
-        label.alignment = .center
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.widthAnchor.constraint(equalToConstant: width).isActive = true
-        return label
-    }
-
     private func makeScreenshotRow(for action: ShortcutAction) -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.spacing = 8
+        let saveSwitch = NSSwitch()
+        saveSwitch.state = CaptureSettingsStore.isSaveEnabled(for: action) ? .on : .off
+        saveSwitch.target = self
+        saveSwitch.action = #selector(toggleSave(_:))
+        saveSwitch.tag = Self.captureActions.firstIndex(of: action) ?? 0
+        saveSwitches[action] = saveSwitch
 
-        let label = NSTextField(labelWithString: action.displayName)
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.widthAnchor.constraint(equalToConstant: labelWidth).isActive = true
+        let copySwitch = NSSwitch()
+        copySwitch.state = CaptureSettingsStore.isCopyEnabled(for: action) ? .on : .off
+        copySwitch.target = self
+        copySwitch.action = #selector(toggleCopy(_:))
+        copySwitch.tag = Self.captureActions.firstIndex(of: action) ?? 0
+        copySwitches[action] = copySwitch
 
-        let tag = Self.captureActions.firstIndex(of: action) ?? 0
+        // Each switch carries its own inline label ("Save"/"Copy") rather
+        // than relying on a column header above the card: System Settings'
+        // own multi-toggle rows are self-describing like this, and it also
+        // sidesteps having to keep a separate header row's columns pixel-
+        // aligned with the card's internal padding.
+        let saveGroup = NSStackView(views: [NSTextField(labelWithString: "Save"), saveSwitch])
+        saveGroup.spacing = 6
+        let copyGroup = NSStackView(views: [NSTextField(labelWithString: "Copy"), copySwitch])
+        copyGroup.spacing = 6
 
-        let saveCheckbox = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggleSave(_:)))
-        saveCheckbox.state = CaptureSettingsStore.isSaveEnabled(for: action) ? .on : .off
-        saveCheckbox.tag = tag
-        reserveColumnWidth(saveCheckbox, width: checkboxWidth)
-        saveCheckboxes[action] = saveCheckbox
+        let trailing = NSStackView(views: [saveGroup, copyGroup])
+        trailing.orientation = .horizontal
+        trailing.spacing = 20
 
-        let copyCheckbox = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggleCopy(_:)))
-        copyCheckbox.state = CaptureSettingsStore.isCopyEnabled(for: action) ? .on : .off
-        copyCheckbox.tag = tag
-        reserveColumnWidth(copyCheckbox, width: checkboxWidth)
-        copyCheckboxes[action] = copyCheckbox
-
-        row.addArrangedSubview(label)
-        row.addArrangedSubview(saveCheckbox)
-        row.addArrangedSubview(copyCheckbox)
-        return row
+        return makeRow(leading: NSTextField(labelWithString: action.displayName), trailing: trailing)
     }
 
-    /// Reserves the same width as the column header caption above it, so
-    /// checkboxes roughly line up under "Save"/"Copy" instead of each row
-    /// sizing to its own content.
-    private func reserveColumnWidth(_ control: NSView, width: CGFloat) {
-        control.translatesAutoresizingMaskIntoConstraints = false
-        control.widthAnchor.constraint(equalToConstant: width).isActive = true
-    }
-
-    @objc private func toggleSave(_ sender: NSButton) {
+    @objc private func toggleSave(_ sender: NSSwitch) {
         let action = Self.captureActions[sender.tag]
         let enabling = sender.state == .on
         guard enabling || CaptureSettingsStore.isCopyEnabled(for: action) else {
@@ -399,7 +447,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         CaptureSettingsStore.setSaveEnabled(enabling, for: action)
     }
 
-    @objc private func toggleCopy(_ sender: NSButton) {
+    @objc private func toggleCopy(_ sender: NSSwitch) {
         let action = Self.captureActions[sender.tag]
         let enabling = sender.state == .on
         guard enabling || CaptureSettingsStore.isSaveEnabled(for: action) else {
@@ -414,8 +462,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         for action in Self.captureActions {
             CaptureSettingsStore.setSaveEnabled(true, for: action)
             CaptureSettingsStore.setCopyEnabled(true, for: action)
-            saveCheckboxes[action]?.state = .on
-            copyCheckboxes[action]?.state = .on
+            saveSwitches[action]?.state = .on
+            copySwitches[action]?.state = .on
         }
     }
 
@@ -425,12 +473,14 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 10
+        stack.spacing = 16
 
-        stack.addArrangedSubview(makeColumnHeaderRow(columns: [("Shortcut", recorderWidth)]))
-        for action in Self.captureActions {
-            stack.addArrangedSubview(makeShortcutRow(for: action))
-        }
+        stack.addArrangedSubview(makePaneTitle("Shortcuts"))
+
+        let rows = Self.captureActions.map { makeShortcutRow(for: $0) }
+        let card = makeCard(rows: rows)
+        card.widthAnchor.constraint(equalToConstant: 460).isActive = true
+        stack.addArrangedSubview(card)
 
         let resetButton = NSButton(title: "Restore Defaults", target: self, action: #selector(restoreShortcutDefaults))
         resetButton.bezelStyle = .rounded
@@ -440,17 +490,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     }
 
     private func makeShortcutRow(for action: ShortcutAction) -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.spacing = 8
-
-        let label = NSTextField(labelWithString: action.displayName)
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.widthAnchor.constraint(equalToConstant: labelWidth).isActive = true
-
-        let recorder = ShortcutRecorderControl(frame: NSRect(x: 0, y: 0, width: recorderWidth, height: 22))
-        recorder.translatesAutoresizingMaskIntoConstraints = false
-        recorder.widthAnchor.constraint(equalToConstant: recorderWidth).isActive = true
+        let recorder = ShortcutRecorderControl(frame: NSRect(x: 0, y: 0, width: 130, height: 22))
+        recorder.widthAnchor.constraint(equalToConstant: 130).isActive = true
         recorder.heightAnchor.constraint(equalToConstant: 22).isActive = true
         recorder.combo = ShortcutStore.combo(for: action)
         recorder.onChange = { [weak self, weak recorder] newCombo in
@@ -459,9 +500,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         }
         recorders[action] = recorder
 
-        row.addArrangedSubview(label)
-        row.addArrangedSubview(recorder)
-        return row
+        return makeRow(leading: NSTextField(labelWithString: action.displayName), trailing: recorder)
     }
 
     private func handleShortcutChange(action: ShortcutAction, recorder: ShortcutRecorderControl, newCombo: KeyCombo?) {
