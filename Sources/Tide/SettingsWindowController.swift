@@ -115,6 +115,31 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         sidebarTableView.reloadData(forRowIndexes: IndexSet(integer: 0), columnIndexes: IndexSet(integer: 0))
     }
 
+    // Shifts the traffic-light buttons right by trafficLightLeftPadding,
+    // leaving their native y untouched — moving y outside their default
+    // range made them vanish entirely (NSTitlebarView clips subviews to
+    // its own bounds), so only x is safe to adjust this way. Each
+    // button's native x is captured the first time it's seen and reused
+    // on every later reposition, rather than adding the padding on top of
+    // whatever the frame currently is — showWindow can be called again
+    // for an already-open window, and blindly incrementing would drift
+    // further right each time.
+    private static let trafficLightLeftPadding: CGFloat = 8
+    private var nativeTrafficLightX: [NSWindow.ButtonType: CGFloat] = [:]
+
+    override func showWindow(_ sender: Any?) {
+        super.showWindow(sender)
+        guard let window else { return }
+        for buttonType: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
+            guard let button = window.standardWindowButton(buttonType) else { continue }
+            let nativeX = nativeTrafficLightX[buttonType] ?? button.frame.origin.x
+            nativeTrafficLightX[buttonType] = nativeX
+            var frame = button.frame
+            frame.origin.x = nativeX + Self.trafficLightLeftPadding
+            button.frame = frame
+        }
+    }
+
     // MARK: - Window layout
 
     /// System Settings' current layout isn't a sidebar flush against the
