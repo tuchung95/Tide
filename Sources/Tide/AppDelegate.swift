@@ -49,6 +49,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.checkForUpdates(silent: true)
         }
+
+        // Pre-warm the settings window off the critical launch path so
+        // its real (and currently somewhat expensive) construction work
+        // happens here instead of as a visible hitch the first time the
+        // user actually opens Settings. Building it doesn't show it —
+        // NSWindow stays offscreen until something orders it front.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.makeSettingsWindowControllerIfNeeded()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -258,20 +267,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    @objc private func openSettingsWindow() {
-        if settingsWindowController == nil {
-            let controller = SettingsWindowController()
-            controller.applyShortcutChange = { [weak self] action, combo in
-                self?.applyShortcutChange(action: action, combo: combo) ?? false
-            }
-            controller.checkForUpdates = { [weak self] in
-                self?.checkForUpdates(silent: false)
-            }
-            settingsWindowController = controller
+    /// Builds the settings window controller if it doesn't exist yet.
+    /// Building it (buildContent(), all three panes, table view, icon
+    /// PNGs read from disk, the whole Auto Layout pass) is real work done
+    /// synchronously — cheap once already built (showWindow on an
+    /// existing window is near-instant), but a visible hitch the first
+    /// time it happens. Called both from a pre-warm shortly after launch
+    /// and, as a fallback, from openSettingsWindow itself in case that
+    /// pre-warm hasn't run yet (e.g. the user opens Settings within the
+    /// first second after launch).
+    @discardableResult
+    private func makeSettingsWindowControllerIfNeeded() -> SettingsWindowController {
+        if let existing = settingsWindowController {
+            return existing
         }
+        let controller = SettingsWindowController()
+        controller.applyShortcutChange = { [weak self] action, combo in
+            self?.applyShortcutChange(action: action, combo: combo) ?? false
+        }
+        controller.checkForUpdates = { [weak self] in
+            self?.checkForUpdates(silent: false)
+        }
+        settingsWindowController = controller
+        return controller
+    }
+
+    @objc private func openSettingsWindow() {
+        let controller = makeSettingsWindowControllerIfNeeded()
         NSApp.activate(ignoringOtherApps: true)
-        settingsWindowController?.showWindow(nil)
-        settingsWindowController?.window?.makeKeyAndOrderFront(nil)
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
     }
 
     /// `silent`: on launch, say nothing if already up to date (no need to
