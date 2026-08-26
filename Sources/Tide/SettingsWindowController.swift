@@ -52,9 +52,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     // ~6pt it worked out to before.
     private let sidebarRowHeight: CGFloat = 40
     // Gap between the item list (scrollView) and the sidebar card's own
-    // edges — independent from sidebarItemPadding below, even though both
-    // happen to be 8pt right now.
-    private static let sidebarListInset: CGFloat = 2
+    // edges, so the selection pill reads as inset from the card's border
+    // rather than flush against it.
+    private static let sidebarListInset: CGFloat = 12
     // Padding around each item's own content (icon/text) within its row.
     private static let sidebarItemPadding: CGFloat = 8
     // Gap between a sidebar item's icon and its label text.
@@ -92,6 +92,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // lights instead of starting below a separate gray titlebar strip.
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
+        // Non-opaque with a clear background so the window's own corner
+        // pixels — outside root's rounded fill path, which only paints the
+        // rounded shape itself — read as transparent (showing the desktop)
+        // rather than an opaque square peeking past root's rounded corner.
+        window.isOpaque = false
+        window.backgroundColor = .clear
         window.isReleasedWhenClosed = false
         window.center()
         self.init(window: window)
@@ -120,6 +126,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private static let cardMargin: CGFloat = 10
     private static let cardGap: CGFloat = 10
     private static let cardCornerRadius: CGFloat = 24
+    // How much bigger than the sidebar card its DropShadowView is made, on
+    // every side, matching that shadow's blurRadius (12) + offset (1).
+    // Bigger than cardMargin, so the shadow gets clipped at the window's
+    // own edge before fully fading out — acceptable now that it's subtle.
+    private static let cardShadowPadding: CGFloat = 13
     // The small group cards in the right-hand panes get their own,
     // smaller radius rather than sharing the sidebar's.
     private static let smallCardCornerRadius: CGFloat = 12
@@ -153,15 +164,14 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // natural rounded corners courtesy of macOS's standard titled-
         // window chrome, so the page still reads as rounded without root
         // needing to redundantly clip to its own radius on top of that.
-        root.cornerRadius = 0
+        root.cornerRadius = 26
         // True white (255,255,255) in light mode, still Dark-Mode-aware
         // (unlike a hardcoded literal white would be).
         root.fillColor = .controlBackgroundColor
 
         let sidebarCard = buildSidebar()
-
         sidebarCard.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(sidebarCard)
+        addCardShadow(for: sidebarCard, toBeAddedTo: root)
 
         NSLayoutConstraint.activate([
             sidebarCard.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.cardMargin),
@@ -193,6 +203,40 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     }
 
     // MARK: - Sidebar (native NSTableView, .sourceList style)
+
+    // Adds `card`'s shadow view to `root`, sized cardShadowPadding bigger
+    // than `card` on every side so the blur has room to fade out before
+    // hitting this view's own edge — see DropShadowView's doc comment for
+    // why a separate view is needed at all rather than a CALayer shadow
+    // directly on the card. Kept as a standalone view added straight to
+    // `root` rather than living inside `card`'s own view (which holds the
+    // NSScrollView/NSTableView): a scroll view can force its ancestors
+    // into layer-backed clipping for scroll performance, which would clip
+    // away exactly the overflow this shadow depends on — sidestepped
+    // entirely by not sharing a parent with it.
+    //
+    // Must be called with `card` not yet added to `root`: this adds the
+    // shadow view first and `card` right after, so plain append order
+    // (rather than addSubview(_:positioned:relativeTo:), which turned out
+    // not to reliably keep the shadow behind an NSBox like `root`) puts
+    // the shadow behind card in z-order.
+    private func addCardShadow(for card: NSView, toBeAddedTo root: NSView) {
+        let cardShadow = DropShadowView()
+        cardShadow.cornerRadius = Self.cardCornerRadius
+        cardShadow.contentInset = Self.cardShadowPadding
+        cardShadow.shadowOpacity = 0.12
+        cardShadow.shadowBlurRadius = 12
+        cardShadow.shadowOffset = NSSize(width: 0, height: -1)
+        cardShadow.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(cardShadow)
+        root.addSubview(card)
+        NSLayoutConstraint.activate([
+            cardShadow.topAnchor.constraint(equalTo: card.topAnchor, constant: -Self.cardShadowPadding),
+            cardShadow.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: -Self.cardShadowPadding),
+            cardShadow.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: Self.cardShadowPadding),
+            cardShadow.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: Self.cardShadowPadding)
+        ])
+    }
 
     private func buildSidebar() -> NSView {
         // `container`'s own bounds are exactly the visible card's bounds —
@@ -229,7 +273,15 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         scrollView.hasHorizontalScroller = false
 
         let tableView = NSTableView()
-        tableView.style = .sourceList
+        // .plain rather than .sourceList: sourceList bakes in an automatic
+        // ~16pt leading inset on each cell view (confirmed by isolated
+        // testing — present even with intercellSpacing and the scroll
+        // view's own margins both at 0), which isn't controllable and
+        // fights a precise, symmetric gap to the card's edge. .plain has
+        // no such inset; selection/pill drawing is already fully custom
+        // here anyway (selectionHighlightStyle = .none below), so the
+        // sourceList style wasn't buying anything but that hidden margin.
+        tableView.style = .plain
         tableView.headerView = nil
         tableView.backgroundColor = .clear
         tableView.rowHeight = sidebarRowHeight
@@ -336,7 +388,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // view with no masking. Sized contentInset bigger than the badge
         // on every side so the blur has room to fade out before hitting
         // this view's own edge (draw(_:) is clipped to that).
-        let badgeShadow = BadgeShadowView()
+        let badgeShadow = DropShadowView()
         badgeShadow.cornerRadius = 7
         badgeShadow.contentInset = 6
         badgeShadow.translatesAutoresizingMaskIntoConstraints = false
@@ -539,10 +591,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 10
+        stack.spacing = 16
 
         stack.addArrangedSubview(makePaneTitle("Screenshot"))
-        stack.setCustomSpacing(16, after: stack.arrangedSubviews.last!)
 
         let rows = Self.captureActions.map { makeScreenshotRow(for: $0) }
         let card = makeCard(rows: rows)
@@ -680,20 +731,29 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     }
 }
 
-/// Draws a rounded, drop-shadowed backdrop behind a sidebar badge icon,
-/// via NSShadow inside draw(_:) (plain Core Graphics) rather than
-/// CALayer's shadow properties — see the comment where this is used in
-/// makeSidebarCell.
-private final class BadgeShadowView: NSView {
+/// Draws a rounded, drop-shadowed backdrop behind whatever sits on top of
+/// it (a sidebar badge icon, the sidebar card itself), via NSShadow inside
+/// draw(_:) (plain Core Graphics) rather than CALayer's shadow properties
+/// — those silently don't render on this machine, and even if they did,
+/// they'd be clipped away by a masksToBounds set for rounded-corner
+/// clipping on that same layer, since a layer's masksToBounds clips its
+/// own shadow too. This view carries no masking of its own, so neither
+/// problem applies; it just needs to be sized contentInset bigger than the
+/// shape on top of it on every side, so the blur has room to fade out
+/// before hitting this view's own edge (draw(_:) is clipped to that).
+private final class DropShadowView: NSView {
     var cornerRadius: CGFloat = 0
     var contentInset: CGFloat = 0
+    var shadowOpacity: CGFloat = 0.35
+    var shadowBlurRadius: CGFloat = 4
+    var shadowOffset: NSSize = NSSize(width: 0, height: -1)
 
     override func draw(_ dirtyRect: NSRect) {
         NSGraphicsContext.saveGraphicsState()
         let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.35)
-        shadow.shadowBlurRadius = 4
-        shadow.shadowOffset = NSSize(width: 0, height: -1)
+        shadow.shadowColor = NSColor.black.withAlphaComponent(shadowOpacity)
+        shadow.shadowBlurRadius = shadowBlurRadius
+        shadow.shadowOffset = shadowOffset
         shadow.set()
         NSColor.black.setFill()
         let shapeRect = bounds.insetBy(dx: contentInset, dy: contentInset)
@@ -710,7 +770,7 @@ private final class SidebarCellView: NSTableCellView {
         let box = NSBox()
         box.boxType = .custom
         box.borderWidth = 0
-        box.cornerRadius = 12
+        box.cornerRadius = 14
         box.fillColor = .clear
         return box
     }()
