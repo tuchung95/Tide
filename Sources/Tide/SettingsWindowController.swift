@@ -30,20 +30,14 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             }
         }
 
-        var symbol: String {
+        // Bundled PNGs (from macosicons.com) rather than SF Symbol badges —
+        // filenames match the resource names copied into the app bundle by
+        // build_app.sh.
+        var iconResourceName: String {
             switch self {
-            case .general: return "gearshape.fill"
-            case .screenshot: return "camera.viewfinder"
-            case .shortcuts: return "keyboard.fill"
-            }
-        }
-
-        // Matches System Settings' rounded, colored icon "badges".
-        var badgeColor: NSColor {
-            switch self {
-            case .general: return .systemGray
-            case .screenshot: return .systemBlue
-            case .shortcuts: return .systemIndigo
+            case .general: return "SidebarGeneralIcon"
+            case .screenshot: return "SidebarScreenshotIcon"
+            case .shortcuts: return "SidebarShortcutsIcon"
             }
         }
     }
@@ -287,7 +281,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         let tab = Tab.allCases[row]
         cell.textField?.stringValue = tab.title
-        cell.imageView?.image = Self.badgeImage(symbol: tab.symbol, color: tab.badgeColor)
+        cell.imageView?.image = Self.sidebarIcon(named: tab.iconResourceName)
         cell.isRowSelected = (row == tableView.selectedRow)
         return cell
     }
@@ -326,11 +320,32 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         let imageView = NSImageView()
         imageView.translatesAutoresizingMaskIntoConstraints = false
+        // Clip to a rounded rect regardless of how each source icon's own
+        // corners look at full size — otherwise they read inconsistently
+        // once scaled down to a 24pt badge.
+        imageView.wantsLayer = true
+        imageView.layer?.cornerRadius = 7
+        imageView.layer?.masksToBounds = true
+
+        // A separate view behind the badge draws its drop shadow: CALayer's
+        // shadow properties don't render at all on this machine, and even
+        // if they did, they'd be clipped away by imageView's own
+        // masksToBounds above (needed for the rounded-corner clip) since a
+        // layer's masksToBounds clips its own shadow too. NSShadow inside
+        // draw(_:) avoids both problems — plain Core Graphics, on its own
+        // view with no masking. Sized contentInset bigger than the badge
+        // on every side so the blur has room to fade out before hitting
+        // this view's own edge (draw(_:) is clipped to that).
+        let badgeShadow = BadgeShadowView()
+        badgeShadow.cornerRadius = 7
+        badgeShadow.contentInset = 6
+        badgeShadow.translatesAutoresizingMaskIntoConstraints = false
 
         let textField = NSTextField(labelWithString: "")
         textField.translatesAutoresizingMaskIntoConstraints = false
         textField.font = NSFont.systemFont(ofSize: 13)
 
+        cell.addSubview(badgeShadow)
         cell.addSubview(imageView)
         cell.addSubview(textField)
         cell.imageView = imageView
@@ -347,6 +362,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             imageView.widthAnchor.constraint(equalToConstant: 24),
             imageView.heightAnchor.constraint(equalToConstant: 24),
 
+            badgeShadow.topAnchor.constraint(equalTo: imageView.topAnchor, constant: -badgeShadow.contentInset),
+            badgeShadow.leadingAnchor.constraint(equalTo: imageView.leadingAnchor, constant: -badgeShadow.contentInset),
+            badgeShadow.trailingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: badgeShadow.contentInset),
+            badgeShadow.bottomAnchor.constraint(equalTo: imageView.bottomAnchor, constant: badgeShadow.contentInset),
+
             textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: Self.sidebarIconTextGap),
             textField.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -Self.sidebarItemPadding),
             textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
@@ -354,47 +374,15 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         return cell
     }
 
-    /// Draws a rounded, colored square with a white SF Symbol centered in
-    /// it — the "badge" look System Settings uses for each sidebar row.
-    /// The glyph is tinted white on its own isolated, transparent canvas
-    /// first: doing the sourceAtop white fill directly against the colored
-    /// background (as a single pass) recolors the *entire* opaque
-    /// background rect white, not just the glyph, since sourceAtop only
-    /// looks at destination alpha — and the background is opaque
-    /// everywhere.
-    private static func badgeImage(symbol: String, color: NSColor, size: CGFloat = 24) -> NSImage {
-        let badge = NSImage(size: NSSize(width: size, height: size))
-        badge.lockFocus()
-        let rect = NSRect(x: 0, y: 0, width: size, height: size)
-        color.setFill()
-        NSBezierPath(roundedRect: rect, xRadius: size * 0.24, yRadius: size * 0.24).fill()
-        badge.unlockFocus()
-
-        guard let symbolImage = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) else {
-            return badge
+    /// Loads a sidebar badge icon bundled as a loose PNG resource (from
+    /// macosicons.com) rather than an asset catalog entry, since the app
+    /// has no .xcassets — NSImage(named:) won't find it, so this goes
+    /// straight to the file in the bundle's Resources folder.
+    private static func sidebarIcon(named name: String) -> NSImage? {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "png") else {
+            return nil
         }
-        let config = NSImage.SymbolConfiguration(pointSize: size * 0.55, weight: .semibold)
-        let configured = symbolImage.withSymbolConfiguration(config) ?? symbolImage
-        let glyphSize = configured.size
-
-        let whiteGlyph = NSImage(size: glyphSize)
-        whiteGlyph.lockFocus()
-        configured.draw(at: .zero, from: .zero, operation: .sourceOver, fraction: 1)
-        NSColor.white.set()
-        NSRect(origin: .zero, size: glyphSize).fill(using: .sourceAtop)
-        whiteGlyph.unlockFocus()
-
-        badge.lockFocus()
-        let glyphRect = NSRect(
-            x: (size - glyphSize.width) / 2,
-            y: (size - glyphSize.height) / 2,
-            width: glyphSize.width,
-            height: glyphSize.height
-        )
-        whiteGlyph.draw(in: glyphRect)
-        badge.unlockFocus()
-
-        return badge
+        return NSImage(contentsOf: url)
     }
 
     private func showPane(for tab: Tab) {
@@ -689,6 +677,28 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
                 recorders[action]?.combo = combo
             }
         }
+    }
+}
+
+/// Draws a rounded, drop-shadowed backdrop behind a sidebar badge icon,
+/// via NSShadow inside draw(_:) (plain Core Graphics) rather than
+/// CALayer's shadow properties — see the comment where this is used in
+/// makeSidebarCell.
+private final class BadgeShadowView: NSView {
+    var cornerRadius: CGFloat = 0
+    var contentInset: CGFloat = 0
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSGraphicsContext.saveGraphicsState()
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.35)
+        shadow.shadowBlurRadius = 4
+        shadow.shadowOffset = NSSize(width: 0, height: -1)
+        shadow.set()
+        NSColor.black.setFill()
+        let shapeRect = bounds.insetBy(dx: contentInset, dy: contentInset)
+        NSBezierPath(roundedRect: shapeRect, xRadius: cornerRadius, yRadius: cornerRadius).fill()
+        NSGraphicsContext.restoreGraphicsState()
     }
 }
 
