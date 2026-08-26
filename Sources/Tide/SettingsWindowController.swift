@@ -17,16 +17,23 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// the actual check + install flow since it needs to show alerts.
     var checkForUpdates: (() -> Void)?
 
+    /// Triggered after any Speed Meter setting changes, so the app
+    /// delegate can apply it to the live menu bar display/timer right
+    /// away instead of waiting for the next scheduled poll.
+    var onSpeedMeterSettingsChanged: (() -> Void)?
+
     private enum Tab: Int, CaseIterable {
         case general
         case screenshot
         case shortcuts
+        case speedMeter
 
         var title: String {
             switch self {
             case .general: return "General"
             case .screenshot: return "Screenshot"
             case .shortcuts: return "Shortcuts"
+            case .speedMeter: return "Speed Meter"
             }
         }
 
@@ -38,6 +45,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             case .general: return "SidebarGeneralIcon"
             case .screenshot: return "SidebarScreenshotIcon"
             case .shortcuts: return "SidebarShortcutsIcon"
+            case .speedMeter: return "SidebarSpeedMeterIcon"
             }
         }
     }
@@ -79,6 +87,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private var saveSwitches: [ShortcutAction: NSButton] = [:]
     private var copySwitches: [ShortcutAction: NSButton] = [:]
     private var launchAtLoginSwitch: NSSwitch!
+    private var speedMeterEnabledSwitch: NSSwitch!
+    private var showUploadSwitch: NSSwitch!
+    private var showDownloadSwitch: NSSwitch!
+    private var speedUnitPopup: NSPopUpButton!
+    private var refreshIntervalPopup: NSPopUpButton!
 
     convenience init() {
         let window = NSWindow(
@@ -417,6 +430,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         let imageView = NSImageView()
         imageView.translatesAutoresizingMaskIntoConstraints = false
+        // Without this, the source PNGs (1024x1024 down to 128x128 on
+        // disk) render cropped to the view's 24x24 bounds instead of
+        // scaled down to fit them — NSImageView's default imageScaling
+        // isn't a reliable proportional fit once the view is layer-backed
+        // (needed below for corner clipping).
+        imageView.imageScaling = .scaleProportionallyUpOrDown
         // Clip to a rounded rect regardless of how each source icon's own
         // corners look at full size — otherwise they read inconsistently
         // once scaled down to a 24pt badge.
@@ -493,6 +512,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         case .general: return buildGeneralPane()
         case .screenshot: return buildScreenshotPane()
         case .shortcuts: return buildShortcutsPane()
+        case .speedMeter: return buildSpeedMeterPane()
         }
     }
 
@@ -715,6 +735,121 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             saveSwitches[action]?.state = .on
             copySwitches[action]?.state = .on
         }
+    }
+
+    // MARK: - Speed Meter pane
+
+    // (label, seconds) pairs offered in the refresh interval popup, in
+    // display order.
+    private static let refreshIntervalOptions: [(label: String, seconds: Double)] = [
+        ("0.5s", 0.5), ("1s", 1.0), ("2s", 2.0), ("5s", 5.0)
+    ]
+
+    private func buildSpeedMeterPane() -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 16
+
+        stack.addArrangedSubview(makePaneTitle("Speed Meter"))
+
+        speedMeterEnabledSwitch = NSSwitch()
+        speedMeterEnabledSwitch.state = SpeedMeterSettingsStore.isEnabled ? .on : .off
+        speedMeterEnabledSwitch.target = self
+        speedMeterEnabledSwitch.action = #selector(toggleSpeedMeterEnabled(_:))
+        let enabledRow = makeRow(leading: NSTextField(labelWithString: "Show Speed on Menu Bar"), trailing: speedMeterEnabledSwitch)
+
+        showUploadSwitch = NSSwitch()
+        showUploadSwitch.state = SpeedMeterSettingsStore.showUpload ? .on : .off
+        showUploadSwitch.target = self
+        showUploadSwitch.action = #selector(toggleShowUpload(_:))
+        let uploadRow = makeRow(leading: NSTextField(labelWithString: "Show Upload (↑)"), trailing: showUploadSwitch)
+
+        showDownloadSwitch = NSSwitch()
+        showDownloadSwitch.state = SpeedMeterSettingsStore.showDownload ? .on : .off
+        showDownloadSwitch.target = self
+        showDownloadSwitch.action = #selector(toggleShowDownload(_:))
+        let downloadRow = makeRow(leading: NSTextField(labelWithString: "Show Download (↓)"), trailing: showDownloadSwitch)
+
+        speedUnitPopup = NSPopUpButton()
+        speedUnitPopup.addItems(withTitles: SpeedUnit.allCases.map(\.displayName))
+        speedUnitPopup.selectItem(at: SpeedUnit.allCases.firstIndex(of: SpeedMeterSettingsStore.unit) ?? 0)
+        speedUnitPopup.target = self
+        speedUnitPopup.action = #selector(unitChanged(_:))
+        let unitRow = makeRow(leading: NSTextField(labelWithString: "Unit"), trailing: speedUnitPopup)
+
+        refreshIntervalPopup = NSPopUpButton()
+        refreshIntervalPopup.addItems(withTitles: Self.refreshIntervalOptions.map(\.label))
+        let currentInterval = SpeedMeterSettingsStore.refreshInterval
+        let intervalIndex = Self.refreshIntervalOptions.firstIndex { $0.seconds == currentInterval } ?? 1
+        refreshIntervalPopup.selectItem(at: intervalIndex)
+        refreshIntervalPopup.target = self
+        refreshIntervalPopup.action = #selector(refreshIntervalChanged(_:))
+        let intervalRow = makeRow(leading: NSTextField(labelWithString: "Refresh Interval"), trailing: refreshIntervalPopup)
+
+        let card = makeCard(rows: [enabledRow, uploadRow, downloadRow, unitRow, intervalRow])
+        card.widthAnchor.constraint(equalToConstant: 460).isActive = true
+        stack.addArrangedSubview(card)
+
+        let resetButton = NSButton(title: "Restore Defaults", target: self, action: #selector(restoreSpeedMeterDefaults))
+        resetButton.bezelStyle = .rounded
+        stack.addArrangedSubview(resetButton)
+
+        return stack
+    }
+
+    @objc private func toggleSpeedMeterEnabled(_ sender: NSSwitch) {
+        SpeedMeterSettingsStore.isEnabled = sender.state == .on
+        onSpeedMeterSettingsChanged?()
+    }
+
+    @objc private func toggleShowUpload(_ sender: NSSwitch) {
+        let enabling = sender.state == .on
+        guard enabling || SpeedMeterSettingsStore.showDownload else {
+            // Refuse to leave both lines off — revert the click.
+            sender.state = .on
+            NSSound.beep()
+            return
+        }
+        SpeedMeterSettingsStore.showUpload = enabling
+        onSpeedMeterSettingsChanged?()
+    }
+
+    @objc private func toggleShowDownload(_ sender: NSSwitch) {
+        let enabling = sender.state == .on
+        guard enabling || SpeedMeterSettingsStore.showUpload else {
+            sender.state = .on
+            NSSound.beep()
+            return
+        }
+        SpeedMeterSettingsStore.showDownload = enabling
+        onSpeedMeterSettingsChanged?()
+    }
+
+    @objc private func unitChanged(_ sender: NSPopUpButton) {
+        SpeedMeterSettingsStore.unit = SpeedUnit.allCases[sender.indexOfSelectedItem]
+        onSpeedMeterSettingsChanged?()
+    }
+
+    @objc private func refreshIntervalChanged(_ sender: NSPopUpButton) {
+        SpeedMeterSettingsStore.refreshInterval = Self.refreshIntervalOptions[sender.indexOfSelectedItem].seconds
+        onSpeedMeterSettingsChanged?()
+    }
+
+    @objc private func restoreSpeedMeterDefaults() {
+        SpeedMeterSettingsStore.isEnabled = true
+        SpeedMeterSettingsStore.showUpload = true
+        SpeedMeterSettingsStore.showDownload = true
+        SpeedMeterSettingsStore.unit = .bytesBinary
+        SpeedMeterSettingsStore.refreshInterval = 1.0
+
+        speedMeterEnabledSwitch.state = .on
+        showUploadSwitch.state = .on
+        showDownloadSwitch.state = .on
+        speedUnitPopup.selectItem(at: 0)
+        refreshIntervalPopup.selectItem(at: Self.refreshIntervalOptions.firstIndex { $0.seconds == 1.0 } ?? 1)
+
+        onSpeedMeterSettingsChanged?()
     }
 
     // MARK: - Shortcuts pane

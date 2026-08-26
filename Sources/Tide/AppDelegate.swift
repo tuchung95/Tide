@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Small per-line font so two stacked lines still fit the menu bar's height.
     private lazy var statusFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
 
-    private lazy var lastSpeedImage = Self.stackedImage(up: "--", down: "--", font: statusFont)
+    private lazy var lastSpeedImage = Self.placeholderImage(font: statusFont)
     private var isShowingCaptureFeedback = false
     private var feedbackResetWorkItem: DispatchWorkItem?
 
@@ -37,12 +37,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         // First poll establishes the baseline sample; the first real
-        // reading appears one second later.
+        // reading appears one refreshInterval later.
         networkMonitor.poll()
-        updateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.refreshSpeed()
-        }
-        RunLoop.main.add(updateTimer!, forMode: .common)
+        restartUpdateTimer()
 
         // Delayed slightly so it never competes with app launch for the
         // network stack; silent unless a newer version is actually found.
@@ -98,44 +95,99 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         networkInfoItem.title = "\(isp) \(info.ip)"
     }
 
+    /// (Re)creates the polling timer at SpeedMeterSettingsStore's current
+    /// refreshInterval. Called at launch and again whenever the Speed
+    /// Meter settings pane changes that interval, since a running Timer's
+    /// own interval can't be changed in place.
+    private func restartUpdateTimer() {
+        updateTimer?.invalidate()
+        let timer = Timer.scheduledTimer(withTimeInterval: SpeedMeterSettingsStore.refreshInterval, repeats: true) { [weak self] _ in
+            self?.refreshSpeed()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        updateTimer = timer
+    }
+
+    /// Called after any Speed Meter setting changes (from the Settings
+    /// window) to apply it immediately rather than waiting for the next
+    /// scheduled poll.
+    private func applySpeedMeterSettingsChange() {
+        restartUpdateTimer()
+        refreshSpeed()
+    }
+
     private func refreshSpeed() {
         guard let sample = networkMonitor.poll() else { return }
-        let down = SpeedFormatter.format(bytesPerSecond: sample.downloadBytesPerSecond)
-        let up = SpeedFormatter.format(bytesPerSecond: sample.uploadBytesPerSecond)
-        lastSpeedImage = Self.stackedImage(up: up, down: down, font: statusFont)
+
+        let showUpload = SpeedMeterSettingsStore.showUpload
+        let showDownload = SpeedMeterSettingsStore.showDownload
+        guard SpeedMeterSettingsStore.isEnabled, showUpload || showDownload else {
+            lastSpeedImage = Self.placeholderImage(font: statusFont)
+            guard !isShowingCaptureFeedback else { return }
+            statusItem.button?.image = lastSpeedImage
+            return
+        }
+
+        let unit = SpeedMeterSettingsStore.unit
+        var lines: [(icon: String, value: String)] = []
+        if showUpload {
+            lines.append(("↑", SpeedFormatter.format(bytesPerSecond: sample.uploadBytesPerSecond, unit: unit)))
+        }
+        if showDownload {
+            lines.append(("↓", SpeedFormatter.format(bytesPerSecond: sample.downloadBytesPerSecond, unit: unit)))
+        }
+        lastSpeedImage = Self.stackedImage(lines: lines, font: statusFont)
 
         // Don't stomp on the capture confirmation while it's showing.
         guard !isShowingCaptureFeedback else { return }
         statusItem.button?.image = lastSpeedImage
     }
 
-    /// Draws a two-line "↑ up / ↓ down" template image: arrow icons fixed
-    /// on the left, values right-aligned to a shared right edge so the
-    /// digits don't jump around as their width changes. NSButton's automatic
-    /// title layout doesn't reliably center a two-line NSAttributedString
-    /// within the menu bar's fixed row height either (it clips the top and
-    /// bottom), so the whole thing is rasterized by hand instead.
-    private static func stackedImage(up: String, down: String, font: NSFont) -> NSImage {
+    /// A static bolt glyph shown instead of live numbers when the speed
+    /// meter is off (or both its lines are hidden) — the menu bar item
+    /// itself always stays, since it's the only way to reach the app.
+    private static func placeholderImage(font: NSFont) -> NSImage {
+        let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+        let image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "Tide")?
+            .withSymbolConfiguration(config) ?? NSImage()
+        image.isTemplate = true
+        return image
+    }
+
+    /// Draws 1 or 2 stacked "{icon} {value}" lines as a single template
+    /// image: arrow icons fixed on the left, values right-aligned to a
+    /// shared right edge so the digits don't jump around as their width
+    /// changes. NSButton's automatic title layout doesn't reliably center
+    /// a two-line NSAttributedString within the menu bar's fixed row
+    /// height either (it clips the top and bottom), so the whole thing is
+    /// rasterized by hand instead.
+    private static func stackedImage(lines: [(icon: String, value: String)], font: NSFont) -> NSImage {
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: NSColor.black
         ]
-        let upIcon = NSAttributedString(string: "↑", attributes: attributes)
-        let downIcon = NSAttributedString(string: "↓", attributes: attributes)
-        let upValue = NSAttributedString(string: " \(up)", attributes: attributes)
-        let downValue = NSAttributedString(string: " \(down)", attributes: attributes)
+        let rendered = lines.map { line in
+            (
+                icon: NSAttributedString(string: line.icon, attributes: attributes),
+                value: NSAttributedString(string: " \(line.value)", attributes: attributes)
+            )
+        }
+        guard !rendered.isEmpty else { return NSImage() }
 
-        let iconWidth = ceil(max(upIcon.size().width, downIcon.size().width))
-        let valueWidth = ceil(max(upValue.size().width, downValue.size().width))
-        let lineHeight = ceil(max(upIcon.size().height, downIcon.size().height))
+        let iconWidth = ceil(rendered.map { $0.icon.size().width }.max() ?? 0)
+        let valueWidth = ceil(rendered.map { $0.value.size().width }.max() ?? 0)
+        let lineHeight = ceil(rendered.map { $0.icon.size().height }.max() ?? 0)
+        let height = lineHeight * CGFloat(rendered.count)
 
-        let width = iconWidth + valueWidth
-        let image = NSImage(size: NSSize(width: width, height: lineHeight * 2))
+        let image = NSImage(size: NSSize(width: iconWidth + valueWidth, height: height))
         image.lockFocus()
-        upIcon.draw(at: NSPoint(x: 0, y: lineHeight))
-        upValue.draw(at: NSPoint(x: iconWidth + (valueWidth - upValue.size().width), y: lineHeight))
-        downIcon.draw(at: NSPoint(x: 0, y: 0))
-        downValue.draw(at: NSPoint(x: iconWidth + (valueWidth - downValue.size().width), y: 0))
+        for (index, line) in rendered.enumerated() {
+            // Top line first: AppKit's y grows upward, so line 0 sits at
+            // the highest y and later lines descend from there.
+            let y = height - CGFloat(index + 1) * lineHeight
+            line.icon.draw(at: NSPoint(x: 0, y: y))
+            line.value.draw(at: NSPoint(x: iconWidth + (valueWidth - line.value.size().width), y: y))
+        }
         image.unlockFocus()
         image.isTemplate = true
         return image
@@ -287,6 +339,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         controller.checkForUpdates = { [weak self] in
             self?.checkForUpdates(silent: false)
+        }
+        controller.onSpeedMeterSettingsChanged = { [weak self] in
+            self?.applySpeedMeterSettingsChange()
         }
         settingsWindowController = controller
         return controller

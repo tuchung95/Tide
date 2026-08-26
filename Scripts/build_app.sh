@@ -56,6 +56,7 @@ cp "Resources/CaptureSound.mp3" "${APP_BUNDLE}/Contents/Resources/CaptureSound.m
 cp "Resources/SidebarGeneralIcon.png" "${APP_BUNDLE}/Contents/Resources/SidebarGeneralIcon.png"
 cp "Resources/SidebarScreenshotIcon.png" "${APP_BUNDLE}/Contents/Resources/SidebarScreenshotIcon.png"
 cp "Resources/SidebarShortcutsIcon.png" "${APP_BUNDLE}/Contents/Resources/SidebarShortcutsIcon.png"
+cp "Resources/SidebarSpeedMeterIcon.png" "${APP_BUNDLE}/Contents/Resources/SidebarSpeedMeterIcon.png"
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${NEW_VERSION}" "${APP_BUNDLE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${NEW_VERSION}" "${APP_BUNDLE}/Contents/Info.plist"
