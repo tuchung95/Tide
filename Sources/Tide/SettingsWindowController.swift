@@ -390,8 +390,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             ?? makeSidebarCell()
 
         let tab = Tab.allCases[row]
+        let icon = Self.sidebarIcon(named: tab.iconResourceName)
         cell.textField?.stringValue = tab.title
-        cell.imageView?.image = Self.sidebarIcon(named: tab.iconResourceName)
+        cell.imageView?.image = icon
+        cell.badgeShadow.image = icon
         cell.isRowSelected = (row == tableView.selectedRow)
         return cell
     }
@@ -440,7 +442,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // corners look at full size — otherwise they read inconsistently
         // once scaled down to a 24pt badge.
         imageView.wantsLayer = true
-        imageView.layer?.cornerRadius = 7
+        imageView.layer?.cornerRadius = 6
         imageView.layer?.masksToBounds = true
 
         // A separate view behind the badge draws its drop shadow: CALayer's
@@ -449,11 +451,15 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // masksToBounds above (needed for the rounded-corner clip) since a
         // layer's masksToBounds clips its own shadow too. NSShadow inside
         // draw(_:) avoids both problems — plain Core Graphics, on its own
-        // view with no masking. Sized contentInset bigger than the badge
-        // on every side so the blur has room to fade out before hitting
-        // this view's own edge (draw(_:) is clipped to that).
+        // view with no masking. It redraws the same icon image (rather than
+        // a plain filled rect) so the shadow follows each icon's own alpha
+        // shape — a generic rect showed through as a flat black box behind
+        // any icon whose square canvas has transparent margin around its
+        // own rounded artwork. Sized contentInset bigger than the badge on
+        // every side so the blur has room to fade out before hitting this
+        // view's own edge (draw(_:) is clipped to that).
         let badgeShadow = DropShadowView()
-        badgeShadow.cornerRadius = 7
+        badgeShadow.cornerRadius = 6
         badgeShadow.contentInset = 6
         badgeShadow.translatesAutoresizingMaskIntoConstraints = false
 
@@ -465,6 +471,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         cell.addSubview(imageView)
         cell.addSubview(textField)
         cell.imageView = imageView
+        cell.badgeShadow = badgeShadow
         cell.textField = textField
 
         NSLayoutConstraint.activate([
@@ -952,9 +959,19 @@ private final class TrafficLightButton: NSView {
 }
 
 private final class DropShadowView: NSView {
+    // Set for an icon badge shadow: redraws the icon itself (rather than a
+    // plain filled rect) so the shadow's shape always matches the icon's
+    // own alpha silhouette — whatever this hides behind gets covered
+    // exactly by that same icon drawn on top in imageView, with no
+    // mismatched edges peeking through as a flat colored box. Leave nil
+    // (and set cornerRadius instead) for a plain rounded-rect shadow, e.g.
+    // behind a solid card that has no transparent margin of its own.
+    var image: NSImage? {
+        didSet { needsDisplay = true }
+    }
     var cornerRadius: CGFloat = 0
     var contentInset: CGFloat = 0
-    var shadowOpacity: CGFloat = 0.35
+    var shadowOpacity: CGFloat = 0.2
     var shadowBlurRadius: CGFloat = 4
     var shadowOffset: NSSize = NSSize(width: 0, height: -1)
 
@@ -965,9 +982,19 @@ private final class DropShadowView: NSView {
         shadow.shadowBlurRadius = shadowBlurRadius
         shadow.shadowOffset = shadowOffset
         shadow.set()
-        NSColor.black.setFill()
         let shapeRect = bounds.insetBy(dx: contentInset, dy: contentInset)
-        NSBezierPath(roundedRect: shapeRect, xRadius: cornerRadius, yRadius: cornerRadius).fill()
+        if let image {
+            // Clipped to the same rounded rect as imageView's own layer
+            // mask: an icon with no transparent margin of its own (a plain
+            // opaque square, e.g. a symbol glyph with a full-bleed
+            // background) would otherwise paint sharp square corners here
+            // that peek out from behind imageView's rounded ones.
+            NSBezierPath(roundedRect: shapeRect, xRadius: cornerRadius, yRadius: cornerRadius).addClip()
+            image.draw(in: shapeRect)
+        } else {
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: shapeRect, xRadius: cornerRadius, yRadius: cornerRadius).fill()
+        }
         NSGraphicsContext.restoreGraphicsState()
     }
 }
@@ -976,6 +1003,8 @@ private final class DropShadowView: NSView {
 /// fixed 12px corner radius — the table's native selectionHighlightStyle
 /// is off (see buildSidebar), so this is the only thing drawing it.
 private final class SidebarCellView: NSTableCellView {
+    var badgeShadow: DropShadowView!
+
     let pillBackground: NSBox = {
         let box = NSBox()
         box.boxType = .custom
