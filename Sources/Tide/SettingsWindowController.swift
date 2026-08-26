@@ -55,6 +55,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     // edges, so the selection pill reads as inset from the card's border
     // rather than flush against it.
     private static let sidebarListInset: CGFloat = 12
+    // Bigger top inset than the other edges: the sidebar card now runs up
+    // to the window's own top edge (see cardTopMargin), so this keeps the
+    // first pill clear of the traffic-light buttons floating above it.
+    private static let sidebarListTopInset: CGFloat = 42
     // Padding around each item's own content (icon/text) within its row.
     private static let sidebarItemPadding: CGFloat = 8
     // Gap between a sidebar item's icon and its label text.
@@ -115,28 +119,44 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         sidebarTableView.reloadData(forRowIndexes: IndexSet(integer: 0), columnIndexes: IndexSet(integer: 0))
     }
 
-    // Shifts the traffic-light buttons right by trafficLightLeftPadding,
-    // leaving their native y untouched — moving y outside their default
-    // range made them vanish entirely (NSTitlebarView clips subviews to
-    // its own bounds), so only x is safe to adjust this way. Each
-    // button's native x is captured the first time it's seen and reused
-    // on every later reposition, rather than adding the padding on top of
-    // whatever the frame currently is — showWindow can be called again
-    // for an already-open window, and blindly incrementing would drift
-    // further right each time.
-    private static let trafficLightLeftPadding: CGFloat = 8
-    private var nativeTrafficLightX: [NSWindow.ButtonType: CGFloat] = [:]
+    // Hand-drawn replacements for the native traffic-light buttons: the
+    // native ones live in NSWindow's own NSTitlebarView, a fixed 28pt-tall
+    // strip that clips its subviews, so they can't be freely repositioned
+    // (confirmed empirically — a big enough offset just makes them vanish,
+    // clipped by that strip's own bounds). Drawing our own, positioned as
+    // regular subviews of root, isn't bound by that constraint. Trade-off:
+    // no native hover-dim, no automatic light/dark glyphs, no built-in
+    // accessibility — just plain colored circles wired to the same
+    // close/miniaturize/zoom actions.
+    private static let trafficLightDiameter: CGFloat = 14
+    private static let trafficLightSpacing: CGFloat = 20
+    private static let trafficLightLeading: CGFloat = 24
+    private static let trafficLightTop: CGFloat = 20
 
-    override func showWindow(_ sender: Any?) {
-        super.showWindow(sender)
-        guard let window else { return }
-        for buttonType: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
-            guard let button = window.standardWindowButton(buttonType) else { continue }
-            let nativeX = nativeTrafficLightX[buttonType] ?? button.frame.origin.x
-            nativeTrafficLightX[buttonType] = nativeX
-            var frame = button.frame
-            frame.origin.x = nativeX + Self.trafficLightLeftPadding
-            button.frame = frame
+    private func addCustomTrafficLights(to root: NSView) {
+        window?.standardWindowButton(.closeButton)?.isHidden = true
+        window?.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        window?.standardWindowButton(.zoomButton)?.isHidden = true
+
+        let lights: [(NSColor, () -> Void)] = [
+            (NSColor(red: 1.0, green: 0.373, blue: 0.341, alpha: 1), { [weak self] in self?.window?.performClose(nil) }),
+            (NSColor(red: 1.0, green: 0.741, blue: 0.180, alpha: 1), { [weak self] in self?.window?.performMiniaturize(nil) }),
+            (NSColor(red: 0.157, green: 0.784, blue: 0.251, alpha: 1), { [weak self] in self?.window?.performZoom(nil) })
+        ]
+
+        for (index, light) in lights.enumerated() {
+            let button = TrafficLightButton()
+            button.diameter = Self.trafficLightDiameter
+            button.color = light.0
+            button.onClick = light.1
+            button.translatesAutoresizingMaskIntoConstraints = false
+            root.addSubview(button)
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: Self.trafficLightDiameter),
+                button.heightAnchor.constraint(equalToConstant: Self.trafficLightDiameter),
+                button.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.trafficLightLeading + CGFloat(index) * Self.trafficLightSpacing),
+                button.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.trafficLightTop)
+            ])
         }
     }
 
@@ -159,11 +179,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     // The small group cards in the right-hand panes get their own,
     // smaller radius rather than sharing the sidebar's.
     private static let smallCardCornerRadius: CGFloat = 12
-    // Bigger top inset than the other edges: with fullSizeContentView the
-    // content area starts at the very top of the window, right where the
-    // traffic-light buttons sit — a plain 10pt margin would run the
-    // sidebar's first row straight under them.
-    private static let cardTopMargin: CGFloat = 32
+    // Same as cardMargin: the sidebar card now runs all the way up to the
+    // window's own top edge, sitting behind/under the traffic-light
+    // buttons (which float above content as part of the window's
+    // titlebar chrome with fullSizeContentView) rather than stopping
+    // short to leave room above them.
+    private static let cardTopMargin: CGFloat = cardMargin
 
     private func buildContent() {
         // NSBox with `fillColor` rather than a plain NSView with
@@ -181,15 +202,13 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         let root = NSBox()
         root.boxType = .custom
         root.borderWidth = 0
-        // No cornerRadius of its own: giving root one clips its own
-        // subviews to that rounded shape near its corners (confirmed with
-        // isolated tests, independent of margin or sibling views) — the
-        // sidebar's drop shadow gets a hard notch cut into it right at its
-        // corner as a result. The window itself already has its own
-        // natural rounded corners courtesy of macOS's standard titled-
-        // window chrome, so the page still reads as rounded without root
-        // needing to redundantly clip to its own radius on top of that.
-        root.cornerRadius = 26
+        // A nonzero cornerRadius here clips root's own subviews to that
+        // rounded shape near its corners (confirmed with isolated tests) —
+        // content that overlaps the corner's clipped-away triangular
+        // sliver disappears. The traffic-light replacements below and the
+        // sidebar card shadow both stay clear of that sliver by keeping
+        // enough distance from the exact corner point along both axes.
+        root.cornerRadius = 30
         // True white (255,255,255) in light mode, still Dark-Mode-aware
         // (unlike a hardcoded literal white would be).
         root.fillColor = .controlBackgroundColor
@@ -225,6 +244,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         }
 
         window?.contentView = root
+        addCustomTrafficLights(to: root)
     }
 
     // MARK: - Sidebar (native NSTableView, .sourceList style)
@@ -340,7 +360,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         background.addSubview(scrollView)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: background.topAnchor, constant: Self.sidebarListInset),
+            scrollView.topAnchor.constraint(equalTo: background.topAnchor, constant: Self.sidebarListTopInset),
             scrollView.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: Self.sidebarListInset),
             scrollView.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -Self.sidebarListInset),
             scrollView.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -Self.sidebarListInset)
@@ -766,6 +786,36 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 /// problem applies; it just needs to be sized contentInset bigger than the
 /// shape on top of it on every side, so the blur has room to fade out
 /// before hitting this view's own edge (draw(_:) is clipped to that).
+/// A plain colored circle standing in for one native traffic-light
+/// button — see addCustomTrafficLights's doc comment for why. Click
+/// handling is a bare mouseDown override rather than NSButton/NSCell
+/// machinery, since all this needs is "run a closure on click", not any
+/// of NSButton's state/highlighting/key-equivalent behavior.
+private final class TrafficLightButton: NSView {
+    var diameter: CGFloat = 12 {
+        didSet { layer?.cornerRadius = diameter / 2 }
+    }
+    var color: NSColor = .clear {
+        didSet { layer?.backgroundColor = color.cgColor }
+    }
+    var onClick: (() -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = diameter / 2
+        layer?.backgroundColor = color.cgColor
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onClick?()
+    }
+}
+
 private final class DropShadowView: NSView {
     var cornerRadius: CGFloat = 0
     var contentInset: CGFloat = 0
