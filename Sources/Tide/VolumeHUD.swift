@@ -20,7 +20,7 @@ final class VolumeHUD {
     private var hideWorkItem: DispatchWorkItem?
 
     private static let panelSize = NSSize(width: 232, height: 76)
-    private static let cornerRadius: CGFloat = 14
+    private static let cornerRadius: CGFloat = 20
     private static let visibleDuration: TimeInterval = 1.2
 
     /// Shows (or refreshes) the HUD for `title` at `level` 0…1.

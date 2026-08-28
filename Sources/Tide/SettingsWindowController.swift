@@ -102,13 +102,18 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     // to the window's own top edge (see cardTopMargin), so this keeps the
     // first pill clear of the traffic-light buttons floating above it.
     private static let sidebarListTopInset: CGFloat = 42
-    // Padding around each item's own content (icon/text) within its row.
-    private static let sidebarItemPadding: CGFloat = 5
+    // Padding around each item's own content (icon/text) within its row —
+    // applied on all four sides, since sidebarRowHeight is derived from it.
+    private static let sidebarItemPadding: CGFloat = 6
     // Gap between a sidebar item's icon and its label text.
     private static let sidebarIconTextGap: CGFloat = 8
     // Rendered size of a sidebar item's icon badge. The bundled PNGs are
     // 256x256, so there is plenty of detail to scale down from.
     private static let sidebarIconSize: CGFloat = 24
+    // Corner radius of that badge. Shared with the shadow drawn behind it:
+    // the two have to agree, or the shadow shows past the icon's corners
+    // on one side of the rounding and falls short on the other.
+    private static let sidebarIconCornerRadius: CGFloat = 7
     // Padding around a pane's content, inside root (leading/top; trailing
     // is capped, not padded, since panes don't have a fixed right edge).
     private static let panePadding: CGFloat = 24
@@ -118,6 +123,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private static let rowContentGap: CGFloat = 8
     // Width every pane's group card is pinned to.
     private static let paneCardWidth: CGFloat = 460
+    // Size of every toggle in the window (see makeSwitch). One step down
+    // from the default, which reads less heavy next to the 13pt row labels.
+    private static let switchControlSize: NSControl.ControlSize = .small
     // Vertical padding around a text-only card row (makeTextRow), which
     // sizes to its text rather than to rowHeight.
     private static let textRowVerticalPadding: CGFloat = 12
@@ -500,7 +508,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // corners look at full size — otherwise they read inconsistently
         // once scaled down to a 24pt badge.
         imageView.wantsLayer = true
-        imageView.layer?.cornerRadius = 6
+        imageView.layer?.cornerRadius = Self.sidebarIconCornerRadius
         imageView.layer?.masksToBounds = true
 
         // A separate view behind the badge draws its drop shadow: CALayer's
@@ -519,8 +527,13 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // blur has room to fade out before hitting this view's own edge
         // (draw(_:) is clipped to that).
         let badgeShadow = DropShadowView()
-        badgeShadow.cornerRadius = 6
-        badgeShadow.contentInset = 6
+        badgeShadow.cornerRadius = Self.sidebarIconCornerRadius
+        badgeShadow.shadowOpacity = 0.45
+        badgeShadow.shadowBlurRadius = 7
+        badgeShadow.shadowOffset = NSSize(width: 0, height: -2)
+        // Has to clear shadowBlurRadius plus the offset, or draw(_:)'s own
+        // clip cuts the shadow off along the bottom edge.
+        badgeShadow.contentInset = 11
         badgeShadow.shapeInset = 1.5
         badgeShadow.translatesAutoresizingMaskIntoConstraints = false
 
@@ -682,6 +695,18 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// A fixed-height row with a leading view pinned left and a trailing
     /// view pinned right, both vertically centered — the standard "label
     /// … control" row shape used throughout System Settings.
+    /// Every toggle in the window is built here so they all share one
+    /// size. Set at each construction site instead, this is exactly the
+    /// kind of value that ends up different from pane to pane.
+    private func makeSwitch(isOn: Bool, action: Selector) -> NSSwitch {
+        let control = NSSwitch()
+        control.controlSize = Self.switchControlSize
+        control.state = isOn ? .on : .off
+        control.target = self
+        control.action = action
+        return control
+    }
+
     private func makeRow(leading: NSView, trailing: NSView) -> NSView {
         let row = NSView()
         row.heightAnchor.constraint(equalToConstant: rowHeight).isActive = true
@@ -712,10 +737,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         stack.addArrangedSubview(makePaneTitle("General"))
 
-        launchAtLoginSwitch = NSSwitch()
-        launchAtLoginSwitch.state = LoginItemManager.isEnabled ? .on : .off
-        launchAtLoginSwitch.target = self
-        launchAtLoginSwitch.action = #selector(toggleLaunchAtLogin(_:))
+        launchAtLoginSwitch = makeSwitch(isOn: LoginItemManager.isEnabled, action: #selector(toggleLaunchAtLogin(_:)))
         let launchRow = makeRow(leading: NSTextField(labelWithString: "Launch at Login"), trailing: launchAtLoginSwitch)
 
         let versionLabel = NSTextField(labelWithString: "Version \(Self.currentVersion)")
@@ -750,10 +772,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         stack.addArrangedSubview(makePaneTitle("Display"))
 
-        volumeKeySwitch = NSSwitch()
-        volumeKeySwitch.state = DisplaySettingsStore.useVolumeKeys ? .on : .off
-        volumeKeySwitch.target = self
-        volumeKeySwitch.action = #selector(toggleVolumeKeys(_:))
+        volumeKeySwitch = makeSwitch(isOn: DisplaySettingsStore.useVolumeKeys, action: #selector(toggleVolumeKeys(_:)))
         let volumeKeyRow = makeRow(
             leading: NSTextField(labelWithString: "Volume Keys Control Monitor Speakers"),
             trailing: volumeKeySwitch
@@ -929,22 +948,13 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         stack.addArrangedSubview(makePaneTitle("Speed Meter"))
 
-        speedMeterEnabledSwitch = NSSwitch()
-        speedMeterEnabledSwitch.state = SpeedMeterSettingsStore.isEnabled ? .on : .off
-        speedMeterEnabledSwitch.target = self
-        speedMeterEnabledSwitch.action = #selector(toggleSpeedMeterEnabled(_:))
+        speedMeterEnabledSwitch = makeSwitch(isOn: SpeedMeterSettingsStore.isEnabled, action: #selector(toggleSpeedMeterEnabled(_:)))
         let enabledRow = makeRow(leading: NSTextField(labelWithString: "Show Speed on Menu Bar"), trailing: speedMeterEnabledSwitch)
 
-        showUploadSwitch = NSSwitch()
-        showUploadSwitch.state = SpeedMeterSettingsStore.showUpload ? .on : .off
-        showUploadSwitch.target = self
-        showUploadSwitch.action = #selector(toggleShowUpload(_:))
+        showUploadSwitch = makeSwitch(isOn: SpeedMeterSettingsStore.showUpload, action: #selector(toggleShowUpload(_:)))
         let uploadRow = makeRow(leading: NSTextField(labelWithString: "Show Upload (↑)"), trailing: showUploadSwitch)
 
-        showDownloadSwitch = NSSwitch()
-        showDownloadSwitch.state = SpeedMeterSettingsStore.showDownload ? .on : .off
-        showDownloadSwitch.target = self
-        showDownloadSwitch.action = #selector(toggleShowDownload(_:))
+        showDownloadSwitch = makeSwitch(isOn: SpeedMeterSettingsStore.showDownload, action: #selector(toggleShowDownload(_:)))
         let downloadRow = makeRow(leading: NSTextField(labelWithString: "Show Download (↓)"), trailing: showDownloadSwitch)
 
         speedUnitPopup = NSPopUpButton()
@@ -1038,22 +1048,13 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         stack.addArrangedSubview(makePaneTitle("Scrolling"))
 
-        reverseScrollingSwitch = NSSwitch()
-        reverseScrollingSwitch.state = ScrollSettingsStore.isEnabled ? .on : .off
-        reverseScrollingSwitch.target = self
-        reverseScrollingSwitch.action = #selector(toggleReverseScrolling(_:))
+        reverseScrollingSwitch = makeSwitch(isOn: ScrollSettingsStore.isEnabled, action: #selector(toggleReverseScrolling(_:)))
         let enabledRow = makeRow(leading: NSTextField(labelWithString: "Reverse Scroll Direction"), trailing: reverseScrollingSwitch)
 
-        reverseMouseSwitch = NSSwitch()
-        reverseMouseSwitch.state = ScrollSettingsStore.reverseMouse ? .on : .off
-        reverseMouseSwitch.target = self
-        reverseMouseSwitch.action = #selector(toggleReverseMouse(_:))
+        reverseMouseSwitch = makeSwitch(isOn: ScrollSettingsStore.reverseMouse, action: #selector(toggleReverseMouse(_:)))
         let mouseRow = makeRow(leading: NSTextField(labelWithString: "Reverse Mouse"), trailing: reverseMouseSwitch)
 
-        reverseTrackpadSwitch = NSSwitch()
-        reverseTrackpadSwitch.state = ScrollSettingsStore.reverseTrackpad ? .on : .off
-        reverseTrackpadSwitch.target = self
-        reverseTrackpadSwitch.action = #selector(toggleReverseTrackpad(_:))
+        reverseTrackpadSwitch = makeSwitch(isOn: ScrollSettingsStore.reverseTrackpad, action: #selector(toggleReverseTrackpad(_:)))
         let trackpadRow = makeRow(leading: NSTextField(labelWithString: "Reverse Trackpad"), trailing: reverseTrackpadSwitch)
 
         let caption = NSTextField(wrappingLabelWithString: "macOS shares one “Natural scrolling” setting across every device. Leave it set for one device and reverse the other one here. Requires Accessibility permission.")
@@ -1250,14 +1251,14 @@ private final class DropShadowView: NSView {
 }
 
 /// A sidebar row cell with its own selection "pill" background, drawn at a
-/// fixed 11px corner radius — the table's native selectionHighlightStyle
+/// fixed 12pt corner radius — the table's native selectionHighlightStyle
 /// is off (see buildSidebar), so this is the only thing drawing it.
 private final class SidebarCellView: NSTableCellView {
     let pillBackground: NSBox = {
         let box = NSBox()
         box.boxType = .custom
         box.borderWidth = 0
-        box.cornerRadius = 11
+        box.cornerRadius = 12
         box.fillColor = .clear
         return box
     }()
