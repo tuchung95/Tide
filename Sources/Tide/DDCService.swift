@@ -41,6 +41,22 @@ final class DDCService {
         Unmanaged.passUnretained(service as AnyObject).toOpaque()
     }
 
+    /// When the last exchange with this monitor finished. Only ever
+    /// touched from DisplayController's serial DDC queue.
+    private var lastTransactionEnd = Date.distantPast
+
+    /// Monitors need a breather between transactions — the spec asks for
+    /// ~50ms after a reply before the next request, and one that's still
+    /// busy ignores anything arriving sooner rather than answering it.
+    /// Reading brightness and then volume back to back is exactly the
+    /// pattern that trips this, which shows up as "this monitor has no
+    /// speakers" on a monitor that does.
+    private func waitForTransactionSlot() {
+        let elapsed = Date().timeIntervalSince(lastTransactionEnd)
+        guard elapsed < Self.minimumTransactionGap else { return }
+        usleep(UInt32((Self.minimumTransactionGap - elapsed) * 1_000_000))
+    }
+
     // MARK: - Discovery
 
     /// Pairs every external display with its DDC endpoint.
@@ -224,9 +240,11 @@ final class DDCService {
 
         for attempt in 0..<Self.attemptCount {
             if attempt > 0 { usleep(Self.retryDelayMicroseconds) }
+            waitForTransactionSlot()
             let status = packet.withUnsafeMutableBytes { buffer in
                 writeI2C(servicePointer, Self.chipAddress, Self.dataOffset, buffer.baseAddress!, packetLength)
             }
+            lastTransactionEnd = Date()
             if status == KERN_SUCCESS { return true }
         }
         return false
@@ -244,10 +262,14 @@ final class DDCService {
         request[3] = Self.checksum(seed: Self.writeChecksumSeed, bytes: request, upTo: 3)
         let requestLength = UInt32(request.count)
 
+        waitForTransactionSlot()
         let writeStatus = request.withUnsafeMutableBytes { buffer in
             symbols.writeI2C(servicePointer, Self.chipAddress, Self.dataOffset, buffer.baseAddress!, requestLength)
         }
-        guard writeStatus == KERN_SUCCESS else { return nil }
+        guard writeStatus == KERN_SUCCESS else {
+            lastTransactionEnd = Date()
+            return nil
+        }
 
         // The spec allows the monitor up to 40ms to prepare its reply;
         // reading too early returns garbage rather than blocking.
@@ -257,12 +279,37 @@ final class DDCService {
         let readStatus = reply.withUnsafeMutableBytes { buffer in
             symbols.readI2C(servicePointer, Self.chipAddress, 0, buffer.baseAddress!, UInt32(Self.replyLength))
         }
+        lastTransactionEnd = Date()
         guard readStatus == KERN_SUCCESS else { return nil }
 
-        // Expected reply: 6E 88 02 00 <vcp> <type> <max hi> <max lo> <cur hi> <cur lo> ...
-        // A result code (reply[2]) other than 0 means "unsupported feature",
-        // which is how a monitor without speakers answers a volume query.
-        guard reply[1] == 0x88, reply[2] == 0x00, reply[4] == vcp.rawValue else { return nil }
+        return Self.parseGetVCPReply(reply, vcp: vcp)
+    }
+
+    /// Decodes a "Get VCP Feature Reply" frame.
+    ///
+    ///     byte  0   0x6E   source address
+    ///           1   0x88   length (0x80 | 8 payload bytes)
+    ///           2   0x02   "get VCP feature reply" opcode
+    ///           3   result code — 0x00 ok, 0x01 unsupported feature
+    ///           4          VCP opcode, echoed back
+    ///           5          VCP type
+    ///         6-7          maximum value, big endian
+    ///         8-9          current value, big endian
+    ///          10          checksum
+    ///
+    /// A result code of 0x01 is a normal answer, not a failure: it's how a
+    /// monitor with no speakers replies to a volume query, and it's what
+    /// decides whether a volume slider is offered at all.
+    ///
+    /// Split out from the I2C call so it can be exercised against known
+    /// frames without a monitor attached.
+    static func parseGetVCPReply(_ reply: [UInt8], vcp: VCP) -> (current: UInt16, max: UInt16)? {
+        guard reply.count >= 10,
+              reply[1] == 0x88,
+              reply[2] == 0x02,
+              reply[3] == 0x00,
+              reply[4] == vcp.rawValue
+        else { return nil }
 
         let max = UInt16(reply[6]) << 8 | UInt16(reply[7])
         let current = UInt16(reply[8]) << 8 | UInt16(reply[9])
@@ -289,6 +336,7 @@ final class DDCService {
     private static let writeChecksumSeed: UInt8 = 0x6E ^ 0x51
     private static let replyLength = 12
     private static let attemptCount = 3
+    private static let minimumTransactionGap: TimeInterval = 0.05
     private static let retryDelayMicroseconds: UInt32 = 40_000
     private static let replyDelayMicroseconds: UInt32 = 40_000
 
