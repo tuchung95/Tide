@@ -93,6 +93,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private static let smallCardPadding: CGFloat = 14
     // Minimum gap between a row's label and its trailing control.
     private static let rowContentGap: CGFloat = 8
+    // Width every pane's group card is pinned to.
+    private static let paneCardWidth: CGFloat = 460
+    // Vertical padding around a text-only card row (makeTextRow), which
+    // sizes to its text rather than to rowHeight.
+    private static let textRowVerticalPadding: CGFloat = 12
 
     private var sidebarTableView: NSTableView!
     private var previouslySelectedSidebarRow: Int?
@@ -608,6 +613,35 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         return box
     }
 
+    /// A card row holding stacked wrapping text instead of a control —
+    /// explanatory copy and live status that belong to the group above
+    /// them, so they sit inside the same card rather than loose beneath
+    /// it. Height comes from the text, unlike makeRow's fixed rowHeight.
+    private func makeTextRow(labels: [NSTextField]) -> NSView {
+        let row = NSView()
+        let textStack = NSStackView(views: labels)
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 6
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(textStack)
+
+        for label in labels {
+            // Wrapping NSTextFields need an explicit wrap width to report
+            // the right height to Auto Layout; the card's own width minus
+            // its padding is that width.
+            label.preferredMaxLayoutWidth = Self.paneCardWidth - Self.smallCardPadding * 2
+        }
+
+        NSLayoutConstraint.activate([
+            textStack.topAnchor.constraint(equalTo: row.topAnchor, constant: Self.textRowVerticalPadding),
+            textStack.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            textStack.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            textStack.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -Self.textRowVerticalPadding)
+        ])
+        return row
+    }
+
     /// A fixed-height row with a leading view pinned left and a trailing
     /// view pinned right, both vertically centered — the standard "label
     /// … control" row shape used throughout System Settings.
@@ -815,7 +849,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         let intervalRow = makeRow(leading: NSTextField(labelWithString: "Refresh Interval"), trailing: refreshIntervalPopup)
 
         let card = makeCard(rows: [enabledRow, uploadRow, downloadRow, unitRow, intervalRow])
-        card.widthAnchor.constraint(equalToConstant: 460).isActive = true
+        card.widthAnchor.constraint(equalToConstant: Self.paneCardWidth).isActive = true
         stack.addArrangedSubview(card)
 
         let resetButton = NSButton(title: "Restore Defaults", target: self, action: #selector(restoreSpeedMeterDefaults))
@@ -907,20 +941,23 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         reverseTrackpadSwitch.action = #selector(toggleReverseTrackpad(_:))
         let trackpadRow = makeRow(leading: NSTextField(labelWithString: "Reverse Trackpad"), trailing: reverseTrackpadSwitch)
 
-        let card = makeCard(rows: [enabledRow, mouseRow, trackpadRow])
-        card.widthAnchor.constraint(equalToConstant: 460).isActive = true
-        stack.addArrangedSubview(card)
-
         let caption = NSTextField(wrappingLabelWithString: "macOS shares one “Natural scrolling” setting across every device. Leave it set for one device and reverse the other one here. Requires Accessibility permission.")
         caption.font = NSFont.systemFont(ofSize: 11)
         caption.textColor = .secondaryLabelColor
-        caption.widthAnchor.constraint(equalToConstant: 460).isActive = true
-        stack.addArrangedSubview(caption)
 
         scrollStatusLabel = NSTextField(wrappingLabelWithString: "")
         scrollStatusLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-        scrollStatusLabel.widthAnchor.constraint(equalToConstant: 460).isActive = true
-        stack.addArrangedSubview(scrollStatusLabel)
+
+        let card = makeCard(rows: [enabledRow, mouseRow, trackpadRow])
+        card.widthAnchor.constraint(equalToConstant: Self.paneCardWidth).isActive = true
+        stack.addArrangedSubview(card)
+
+        // Its own card rather than a fourth row in the one above: the copy
+        // and the status line describe the whole group, they aren't one
+        // more setting in it.
+        let notesCard = makeCard(rows: [makeTextRow(labels: [caption, scrollStatusLabel])])
+        notesCard.widthAnchor.constraint(equalToConstant: Self.paneCardWidth).isActive = true
+        stack.addArrangedSubview(notesCard)
 
         let resetButton = NSButton(title: "Restore Defaults", target: self, action: #selector(restoreScrollingDefaults))
         resetButton.bezelStyle = .rounded
