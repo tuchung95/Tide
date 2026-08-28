@@ -8,9 +8,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var publicNetworkInfo: PublicNetworkInfo.Info?
     private var isFetchingPublicNetworkInfo = false
     private var captureMenuItems: [ShortcutAction: NSMenuItem] = [:]
+    /// Every item currently making up the "Displays" section, so it can be
+    /// torn out and rebuilt when a monitor is plugged in or unplugged.
+    private var displayMenuItems: [NSMenuItem] = []
+    /// Brightness sliders by display, so they can be re-synced when the
+    /// menu opens (see menuWillOpen).
+    private var brightnessSliders: [CGDirectDisplayID: MenuSliderView] = [:]
 
     private let networkMonitor = NetworkMonitor()
     private let scrollDirectionManager = ScrollDirectionManager()
+    private let displayController = DisplayController()
     private let screenshotManager = ScreenshotManager()
     private lazy var captureSound = Bundle.main.url(forResource: "CaptureSound", withExtension: "mp3")
         .flatMap { NSSound(contentsOf: $0, byReference: true) }
@@ -52,6 +59,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         scrollDirectionManager.apply()
 
+        // Discovery talks to the monitors over DDC, which is slow, so it
+        // runs in the background and calls back once it knows what's out
+        // there — the menu simply has no Displays section until then.
+        displayController.onDisplaysChanged = { [weak self] in
+            self?.rebuildDisplaySection()
+        }
+        displayController.start()
+
         // First poll establishes the baseline sample; the first real
         // reading appears one refreshInterval later.
         networkMonitor.poll()
@@ -75,9 +90,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         updateTimer?.invalidate()
+        // A software gamma dim survives the process that installed it, so
+        // quitting without this would leave the display stuck dim.
+        displayController.shutDown()
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        // The keyboard's brightness keys change the built-in panel without
+        // telling anyone, so its slider is re-synced each time the menu is
+        // about to appear.
+        for (displayID, brightness) in displayController.refreshFastValues() {
+            brightnessSliders[displayID]?.setValue(brightness)
+        }
+
         if let info = publicNetworkInfo {
             applyPublicNetworkInfo(info)
         } else if !isFetchingPublicNetworkInfo {
@@ -255,6 +280,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
         menu.delegate = self
+        // Off because the slider rows carry no action of their own: with
+        // automatic enabling on, AppKit disables any item without a
+        // target/action, and a disabled item's custom view never sees the
+        // mouse — the sliders would draw but refuse to be dragged. Every
+        // item here sets its own isEnabled instead.
+        menu.autoenablesItems = false
 
         networkInfoItem = makeItem("—", action: nil, symbol: "network")
         networkInfoItem.isEnabled = false
@@ -262,9 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        let screenshotHeader = NSMenuItem(title: "Screenshot", action: nil, keyEquivalent: "")
-        screenshotHeader.isEnabled = false
-        menu.addItem(screenshotHeader)
+        menu.addItem(makeSectionHeader("Screenshot"))
 
         let selectedAreaItem = makeCaptureItem(.selectedArea, symbol: "crop")
         let windowItem = makeCaptureItem(.window, symbol: "macwindow")
@@ -302,6 +331,107 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.keyEquivalent = character
             item.keyEquivalentModifierMask = combo.modifierFlags.intersection(.deviceIndependentFlagsMask)
         }
+    }
+
+    /// Rebuilds the "Displays" block in place, between the network info
+    /// line and the Screenshot block.
+    ///
+    /// Rebuilt rather than updated because the shape changes, not just the
+    /// values: a monitor arriving adds rows, and one leaving takes its
+    /// rows with it. The rest of the menu is left untouched so the
+    /// screenshot shortcuts and their menu items survive.
+    private func rebuildDisplaySection() {
+        guard let menu = statusItem.menu else { return }
+
+        for item in displayMenuItems {
+            menu.removeItem(item)
+        }
+        displayMenuItems.removeAll()
+        brightnessSliders.removeAll()
+
+        let displays = displayController.displays
+        guard !displays.isEmpty else { return }
+
+        // Straight after the network info line and its separator.
+        var insertionIndex = menu.index(of: networkInfoItem) + 2
+        func insert(_ item: NSMenuItem) {
+            menu.insertItem(item, at: insertionIndex)
+            displayMenuItems.append(item)
+            insertionIndex += 1
+        }
+
+        insert(makeSectionHeader("Displays"))
+
+        for display in displays {
+            // With one display the sliders are unambiguous; naming it
+            // would just be a line of noise.
+            if displays.count > 1 {
+                insert(makeDisplayNameItem(display.info.name))
+            }
+
+            let id = display.info.id
+            let brightnessItem = makeSliderItem(
+                symbolName: "sun.max.fill",
+                accessibilityLabel: "\(display.info.name) brightness",
+                value: display.brightness
+            ) { [weak self] value in
+                self?.displayController.setBrightness(value, forDisplayID: id)
+            }
+            brightnessSliders[id] = brightnessItem.view as? MenuSliderView
+            insert(brightnessItem)
+
+            // Only shown when the monitor actually answered a volume
+            // query — most panels have no speakers to control.
+            if display.supportsVolume {
+                insert(makeSliderItem(
+                    symbolName: "speaker.wave.2.fill",
+                    accessibilityLabel: "\(display.info.name) volume",
+                    value: display.volume
+                ) { [weak self] value in
+                    self?.displayController.setVolume(value, forDisplayID: id)
+                })
+            }
+        }
+
+        insert(.separator())
+    }
+
+    /// A non-clickable section title ("Displays", "Screenshot"), lined up
+    /// with the icon column rather than with the items' text.
+    ///
+    /// Drawn by its own view because AppKit's title indent depends on what
+    /// else is in the section — see MenuSectionHeaderView.
+    private func makeSectionHeader(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem()
+        item.view = MenuSectionHeaderView(title: title)
+        item.isEnabled = false
+        return item
+    }
+
+    private func makeDisplayNameItem(_ name: String) -> NSMenuItem {
+        let item = NSMenuItem(title: name, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        item.attributedTitle = NSAttributedString(string: name, attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.secondaryLabelColor
+        ])
+        return item
+    }
+
+    private func makeSliderItem(
+        symbolName: String,
+        accessibilityLabel: String,
+        value: Float,
+        onChange: @escaping (Float) -> Void
+    ) -> NSMenuItem {
+        let item = NSMenuItem()
+        item.view = MenuSliderView(
+            symbolName: symbolName,
+            accessibilityLabel: accessibilityLabel,
+            value: value,
+            onChange: onChange
+        )
+        return item
     }
 
     private func makeItem(_ title: String, action: Selector?, key: String = "", symbol: String? = nil) -> NSMenuItem {

@@ -22,6 +22,25 @@ Tạo bởi **Louis Chung**.
 - Chụp xong menu bar nháy **"✓ Saved"**, **"✓ Copied"** hoặc **"✓ Saved & Copied"** kèm tiếng chụp ngắn trong ~1.2s rồi tự trở về hiển thị tốc độ mạng.
 - Phím tắt là **toàn cục** — bấm được ở bất kỳ đâu, không cần mở menu Tide trước và không cần quyền Accessibility. Mặc định `⌃⇧3` (Full Screen), `⌃⇧4` (Selected Area), `⌃⇧5` (Window); chọn Control thay vì Command để không đụng phím tắt chụp ảnh sẵn có của macOS.
 
+### Điều khiển màn hình
+
+macOS chỉ cho chỉnh độ sáng của màn hình built-in; với màn hình ngoài, cách duy nhất là với tay lên nút vật lý trên monitor. Tide đưa cả hai vào menu bar.
+
+- Mục **Displays** ở đầu menu có một slider độ sáng cho mỗi màn hình đang cắm, kéo tới đâu màn đổi tới đó. Có từ 2 màn trở lên thì mỗi nhóm slider được ghi tên màn hình phía trên.
+- Màn hình ngoài có loa thì có thêm slider **âm lượng**. Slider này chỉ hiện khi monitor thực sự trả lời truy vấn âm lượng — phần lớn màn không có loa, và một thanh trượt chết còn tệ hơn là không có.
+- Ba đường điều khiển khác nhau, tự chọn theo từng màn:
+
+| Màn hình | Độ sáng | Âm lượng |
+|---|---|---|
+| Built-in | API DisplayServices của hệ thống | — |
+| Ngoài, hỗ trợ DDC/CI | DDC/CI qua cáp video (VCP `0x10`) | VCP `0x62` |
+| Ngoài, không có DDC | làm mờ bằng gamma | — |
+
+- **DDC/CI** là giao thức mà chính menu OSD của monitor dùng, chạy qua cáp video, nên chỉnh từ Tide giống hệt bấm nút trên màn. Hầu hết monitor rời đều hỗ trợ; TV, màn qua hub/KVM rẻ tiền thì thường không.
+- Màn không có DDC sẽ rơi về **làm mờ bằng gamma**: hình tối đi nhưng đèn nền vẫn sáng như cũ, nên mất một ít độ tương phản ở vùng tối. Chỉ dùng khi không còn cách nào khác, và chỉ giảm được xuống 25% chứ không tắt hẳn (màn đen thui thì không còn thấy menu để chỉnh lại). Đây cũng là giá trị duy nhất Tide tự nhớ — macOS đã nhớ độ sáng màn built-in, monitor DDC nhớ trong firmware của nó, còn gamma thì mất sạch mỗi khi thoát app hoặc rút cáp.
+- Cắm/rút màn hình thì menu tự cập nhật (chờ 1.5s cho sắp xếp màn hình ổn định rồi mới dò, vì monitor đang khởi động không trả lời DDC).
+- Không cần cấp quyền gì thêm.
+
 ### Hướng cuộn riêng cho chuột và trackpad
 
 macOS chỉ có **một** công tắc "Natural scrolling" dùng chung cho mọi thiết bị trỏ: chỉnh đúng chiều cho trackpad thì con chuột bị ngược, và ngược lại.
