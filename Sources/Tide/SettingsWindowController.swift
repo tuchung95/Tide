@@ -8,7 +8,7 @@ import AppKit
 /// Shortcut persistence/registration is still owned by the app delegate via
 /// `applyShortcutChange`; Save/Copy and Launch at Login are simple enough
 /// to read/write directly from here.
-final class SettingsWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
+final class SettingsWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate {
 
     /// Returns true if `combo` (nil means "clear") was applied successfully.
     var applyShortcutChange: ((ShortcutAction, KeyCombo?) -> Bool)?
@@ -34,10 +34,13 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// silently refusing it) looks exactly like the feature not working.
     var isScrollReversingActive: (() -> Bool)?
 
+    /// Fired when this window closes, so the app delegate can drop the
+    /// Dock icon it puts up while Settings is open.
+    var onWindowClose: (() -> Void)?
+
     private enum Tab: Int, CaseIterable {
         case general
         case screenshot
-        case shortcuts
         case speedMeter
         case scrolling
 
@@ -45,7 +48,6 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             switch self {
             case .general: return "General"
             case .screenshot: return "Screenshot"
-            case .shortcuts: return "Shortcuts"
             case .speedMeter: return "Speed Meter"
             case .scrolling: return "Scrolling"
             }
@@ -58,7 +60,6 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             switch self {
             case .general: return "SidebarGeneralIcon"
             case .screenshot: return "SidebarScreenshotIcon"
-            case .shortcuts: return "SidebarShortcutsIcon"
             case .speedMeter: return "SidebarSpeedMeterIcon"
             case .scrolling: return "SidebarScrollingIcon"
             }
@@ -142,6 +143,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         window.isReleasedWhenClosed = false
         window.center()
         self.init(window: window)
+        window.delegate = self
         buildContent()
         // Full reloadData() first so the table actually has its 3 rows
         // before selecting — and notably NOT called again after selecting:
@@ -154,6 +156,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // didn't fire for this first selection: force just this one row's
         // cell to redraw with the correct pill state.
         sidebarTableView.reloadData(forRowIndexes: IndexSet(integer: 0), columnIndexes: IndexSet(integer: 0))
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        onWindowClose?()
     }
 
     // Hand-drawn replacements for the native traffic-light buttons: the
@@ -275,7 +281,14 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             NSLayoutConstraint.activate([
                 pane.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.cardTopMargin + Self.panePadding),
                 pane.leadingAnchor.constraint(equalTo: sidebarCard.trailingAnchor, constant: Self.cardGap + Self.panePadding),
-                pane.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -(Self.cardMargin + Self.panePadding))
+                pane.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -(Self.cardMargin + Self.panePadding)),
+                // Required inequality, so it also acts as the window's
+                // minimum height the way the trailing one already fixes
+                // its width: the tallest pane (Screenshot, two cards)
+                // would otherwise run past the window's bottom edge and
+                // get clipped, since panes are laid out from the top and
+                // nothing else drives the content height.
+                pane.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -(Self.cardMargin + Self.panePadding))
             ])
             panes[tab] = pane
         }
@@ -542,7 +555,6 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         switch tab {
         case .general: return buildGeneralPane()
         case .screenshot: return buildScreenshotPane()
-        case .shortcuts: return buildShortcutsPane()
         case .speedMeter: return buildSpeedMeterPane()
         case .scrolling: return buildScrollingPane()
         }
@@ -555,6 +567,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         label.font = NSFont.systemFont(ofSize: 20, weight: .semibold)
         return label
     }
+
 
     /// #F7F7F7 in Light Mode — the exact requested value — with a dynamic
     /// provider (rather than a plain literal NSColor) so it still adapts
@@ -711,8 +724,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
     }
 
-    // MARK: - Screenshot pane (Save/Copy toggles)
+    // MARK: - Screenshot pane (Save/Copy destinations + shortcuts)
 
+    /// One row per capture type carrying everything about it — where the
+    /// capture goes and what key triggers it — instead of splitting the
+    /// same three capture types across two sidebar tabs (or two cards),
+    /// which made the reader match rows up by name across groups.
     private func buildScreenshotPane() -> NSView {
         let stack = NSStackView()
         stack.orientation = .vertical
@@ -721,9 +738,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         stack.addArrangedSubview(makePaneTitle("Screenshot"))
 
-        let rows = Self.captureActions.map { makeScreenshotRow(for: $0) }
-        let card = makeCard(rows: rows)
-        card.widthAnchor.constraint(equalToConstant: 460).isActive = true
+        let card = makeCard(rows: Self.captureActions.map { makeScreenshotRow(for: $0) })
+        card.widthAnchor.constraint(equalToConstant: Self.paneCardWidth).isActive = true
         stack.addArrangedSubview(card)
 
         let resetButton = NSButton(title: "Restore Defaults", target: self, action: #selector(restoreScreenshotDefaults))
@@ -759,7 +775,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         let copyGroup = NSStackView(views: [NSTextField(labelWithString: "Copy"), copySwitch])
         copyGroup.spacing = 6
 
-        let trailing = NSStackView(views: [saveGroup, copyGroup])
+        let trailing = NSStackView(views: [saveGroup, copyGroup, makeShortcutRecorder(for: action)])
         trailing.orientation = .horizontal
         trailing.spacing = 20
 
@@ -789,6 +805,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         CaptureSettingsStore.setCopyEnabled(enabling, for: action)
     }
 
+    /// Restores both of the pane's cards, since they now share one button.
     @objc private func restoreScreenshotDefaults() {
         for action in Self.captureActions {
             CaptureSettingsStore.setSaveEnabled(true, for: action)
@@ -796,6 +813,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             saveSwitches[action]?.state = .on
             copySwitches[action]?.state = .on
         }
+        restoreShortcutDefaults()
     }
 
     // MARK: - Speed Meter pane
@@ -1026,29 +1044,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         refreshScrollStatus()
     }
 
-    // MARK: - Shortcuts pane
+    // MARK: - Shortcut recording (trailing control of a Screenshot row)
 
-    private func buildShortcutsPane() -> NSView {
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 16
-
-        stack.addArrangedSubview(makePaneTitle("Shortcuts"))
-
-        let rows = Self.captureActions.map { makeShortcutRow(for: $0) }
-        let card = makeCard(rows: rows)
-        card.widthAnchor.constraint(equalToConstant: 460).isActive = true
-        stack.addArrangedSubview(card)
-
-        let resetButton = NSButton(title: "Restore Defaults", target: self, action: #selector(restoreShortcutDefaults))
-        resetButton.bezelStyle = .rounded
-        stack.addArrangedSubview(resetButton)
-
-        return stack
-    }
-
-    private func makeShortcutRow(for action: ShortcutAction) -> NSView {
+    private func makeShortcutRecorder(for action: ShortcutAction) -> NSView {
         let recorder = ShortcutRecorderControl(frame: NSRect(x: 0, y: 0, width: 130, height: 22))
         recorder.widthAnchor.constraint(equalToConstant: 130).isActive = true
         recorder.heightAnchor.constraint(equalToConstant: 22).isActive = true
@@ -1058,8 +1056,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             self.handleShortcutChange(action: action, recorder: recorder, newCombo: newCombo)
         }
         recorders[action] = recorder
-
-        return makeRow(leading: NSTextField(labelWithString: action.displayName), trailing: recorder)
+        return recorder
     }
 
     private func handleShortcutChange(action: ShortcutAction, recorder: ShortcutRecorderControl, newCombo: KeyCombo?) {
@@ -1075,7 +1072,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         }
     }
 
-    @objc private func restoreShortcutDefaults() {
+    private func restoreShortcutDefaults() {
         for action in Self.captureActions {
             let combo = action.defaultCombo
             if applyShortcutChange?(action, combo) == true {

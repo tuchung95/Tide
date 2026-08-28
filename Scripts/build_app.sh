@@ -55,7 +55,6 @@ cp "Resources/AppIcon.icns" "${APP_BUNDLE}/Contents/Resources/AppIcon.icns"
 cp "Resources/CaptureSound.mp3" "${APP_BUNDLE}/Contents/Resources/CaptureSound.mp3"
 cp "Resources/SidebarGeneralIcon.png" "${APP_BUNDLE}/Contents/Resources/SidebarGeneralIcon.png"
 cp "Resources/SidebarScreenshotIcon.png" "${APP_BUNDLE}/Contents/Resources/SidebarScreenshotIcon.png"
-cp "Resources/SidebarShortcutsIcon.png" "${APP_BUNDLE}/Contents/Resources/SidebarShortcutsIcon.png"
 cp "Resources/SidebarSpeedMeterIcon.png" "${APP_BUNDLE}/Contents/Resources/SidebarSpeedMeterIcon.png"
 cp "Resources/SidebarScrollingIcon.png" "${APP_BUNDLE}/Contents/Resources/SidebarScrollingIcon.png"
 
@@ -134,6 +133,22 @@ else
             --title "v${NEW_VERSION}" \
             --notes "Automated build."; then
             echo "Published: https://github.com/${REPO}/releases/tag/v${NEW_VERSION}"
+
+            # Only the current version is kept: every older release (and
+            # its tag) is deleted right after the new one publishes, so
+            # the releases page never accumulates the patch versions this
+            # script bumps on every build. Runs only once the new release
+            # exists, so a failed publish can never leave the repo with no
+            # release at all.
+            OLD_RELEASES=$(gh release list --repo "${REPO}" --limit 200 \
+                --json tagName --jq ".[].tagName | select(. != \"v${NEW_VERSION}\")" 2>/dev/null || true)
+            for OLD_TAG in ${OLD_RELEASES}; do
+                if gh release delete "${OLD_TAG}" --repo "${REPO}" --cleanup-tag --yes >/dev/null 2>&1; then
+                    echo "Removed old release ${OLD_TAG}."
+                else
+                    echo "Warning: failed to remove old release ${OLD_TAG}."
+                fi
+            done
         else
             echo "Warning: failed to create GitHub release v${NEW_VERSION}."
         fi

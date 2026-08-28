@@ -37,19 +37,15 @@ Tide giải quyết bằng cách để nguyên setting của hệ thống cho m�
 
 - **Launch at Login** — tự khởi động cùng macOS (chỉ hoạt động khi chạy từ bản `.app` đã đóng gói).
 - **Tự động cập nhật** — mỗi lần mở app tự kiểm tra ngầm bản mới trên GitHub Releases (im lặng nếu đã mới nhất); có bản mới thì hỏi cài luôn: tải `.zip` của release, giải nén, thay thế `/Applications/Tide.app` rồi tự khởi động lại. Kiểm tra thủ công bằng nút **Check for Updates…** trong Settings → General.
-- Không có icon ở Dock (`LSUIElement`), chỉ nằm trên menu bar.
+- Không có icon ở Dock (`LSUIElement`), chỉ nằm trên menu bar — trừ lúc cửa sổ Settings đang mở, khi đó app hiện ở Dock và ⌘-Tab như app bình thường, đóng cửa sổ là ẩn lại.
 
 ## Cửa sổ Settings
 
 Dạng sidebar-tabs giống System Settings, chia theo chức năng. Mỗi nhóm có nút **Restore Defaults** riêng, không ảnh hưởng các nhóm khác.
 
-**Screenshot** — 2 checkbox Save/Copy độc lập cho từng chức năng (không cho tắt cả hai cùng lúc).
+**Screenshot** — mỗi chức năng một dòng, gồm đủ 2 checkbox Save/Copy (không cho tắt cả hai cùng lúc) và ô phím tắt của chính nó: bấm vào ô để ghi tổ hợp mới, Esc để huỷ, Delete để xoá.
 
 ![Pane Screenshot](docs/pane-screenshot.png)
-
-**Shortcuts** — bấm vào ô để ghi tổ hợp mới, Esc để huỷ, Delete để xoá.
-
-![Pane Shortcuts](docs/pane-shortcuts.png)
 
 **Speed Meter** — bật/tắt hiển thị tốc độ, chọn dòng ↑ ↓, đơn vị và nhịp cập nhật.
 
@@ -89,3 +85,5 @@ SKIP_RELEASE=1 ./Scripts/build_app.sh
 ```
 
 Script compile thẳng bằng `swiftc` (SwiftPM cần SDK path chỉ có trong Xcode.app đầy đủ), tự tăng patch version trong `Resources/VERSION`, đóng gói `Tide.app`, rồi ký bằng certificate `Tide Local Dev` nếu máy có sẵn — chữ ký ổn định qua các lần rebuild giúp macOS không đòi cấp lại quyền — không có thì rơi về ký ad-hoc.
+
+Trang Releases chỉ giữ đúng bản mới nhất: publish xong, script tự xoá mọi release cũ hơn kèm tag của chúng.

@@ -32,6 +32,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.imagePosition = .imageOnly
 
         statusItem.menu = buildMenu()
+        // Only ever seen while Settings is open (see openSettingsWindow):
+        // an app switched to .regular with no main menu shows an empty
+        // menu bar, with no ⌘W/⌘Q of its own.
+        NSApp.mainMenu = buildMainMenu()
 
         for action in ShortcutAction.allCases {
             registerHotKey(for: action)
@@ -384,6 +388,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// pre-warm hasn't run yet (e.g. the user opens Settings within the
     /// first second after launch).
     @discardableResult
+    /// The bare minimum for the app's spell as a regular, Dock-visible
+    /// app: an app menu and a window menu, so the standard shortcuts work
+    /// while the Settings window is up.
+    private func buildMainMenu() -> NSMenu {
+        let mainMenu = NSMenu()
+
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Hide Tide", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Quit Tide", action: #selector(quit), keyEquivalent: "q")
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        let windowMenuItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenuItem.submenu = windowMenu
+        mainMenu.addItem(windowMenuItem)
+
+        return mainMenu
+    }
+
     private func makeSettingsWindowControllerIfNeeded() -> SettingsWindowController {
         if let existing = settingsWindowController {
             return existing
@@ -404,6 +432,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.isScrollReversingActive = { [weak self] in
             self?.scrollDirectionManager.isRunning ?? false
         }
+        controller.onWindowClose = {
+            // Back to menu-bar-only once Settings is gone.
+            NSApp.setActivationPolicy(.accessory)
+        }
         settingsWindowController = controller
         return controller
     }
@@ -413,6 +445,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Permission may have been granted (or revoked) since the window
         // was last open.
         controller.refreshScrollStatus()
+        // The app is LSUIElement, so it normally has no Dock icon and no
+        // menu bar at all. While Settings is open it becomes a regular
+        // app: the window then shows up in the Dock and in ⌘-Tab like any
+        // other, instead of being reachable only from the menu bar item.
+        // Reverted in the window's onWindowClose.
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
