@@ -88,10 +88,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     private let sidebarWidth: CGFloat = 220
     private let rowHeight: CGFloat = 40
-    // 28pt icon + 5pt above/below = 38pt, so each item's vertical padding
-    // matches its horizontal padding (sidebarItemPadding) instead of the
-    // ~6pt it worked out to before.
-    private let sidebarRowHeight: CGFloat = 38
+    // sidebarIconSize + sidebarItemPadding above and below, so each item's
+    // vertical padding matches its horizontal padding. Kept as the sum
+    // rather than a literal: change the icon size and the row follows,
+    // instead of silently drifting to some other padding.
+    private let sidebarRowHeight = SettingsWindowController.sidebarIconSize
+        + SettingsWindowController.sidebarItemPadding * 2
     // Gap between the item list (scrollView) and the sidebar card's own
     // edges, so the selection pill reads as inset from the card's border
     // rather than flush against it.
@@ -104,6 +106,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private static let sidebarItemPadding: CGFloat = 5
     // Gap between a sidebar item's icon and its label text.
     private static let sidebarIconTextGap: CGFloat = 8
+    // Rendered size of a sidebar item's icon badge. The bundled PNGs are
+    // 256x256, so there is plenty of detail to scale down from.
+    private static let sidebarIconSize: CGFloat = 24
     // Padding around a pane's content, inside root (leading/top; trailing
     // is capped, not padded, since panes don't have a fixed right edge).
     private static let panePadding: CGFloat = 24
@@ -486,9 +491,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         let imageView = NSImageView()
         imageView.translatesAutoresizingMaskIntoConstraints = false
-        // Without this, the source PNGs (1024x1024 down to 128x128 on
-        // disk) render cropped to the view's 24x24 bounds instead of
-        // scaled down to fit them — NSImageView's default imageScaling
+        // Without this, the 256x256 source PNGs render cropped to the
+        // view's much smaller bounds instead of scaled down to fit them — NSImageView's default imageScaling
         // isn't a reliable proportional fit once the view is layer-backed
         // (needed below for corner clipping).
         imageView.imageScaling = .scaleProportionallyUpOrDown
@@ -538,8 +542,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
             imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: Self.sidebarItemPadding),
             imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            imageView.widthAnchor.constraint(equalToConstant: 28),
-            imageView.heightAnchor.constraint(equalToConstant: 28),
+            imageView.widthAnchor.constraint(equalToConstant: Self.sidebarIconSize),
+            imageView.heightAnchor.constraint(equalToConstant: Self.sidebarIconSize),
 
             badgeShadow.topAnchor.constraint(equalTo: imageView.topAnchor, constant: -badgeShadow.contentInset),
             badgeShadow.leadingAnchor.constraint(equalTo: imageView.leadingAnchor, constant: -badgeShadow.contentInset),
