@@ -37,7 +37,7 @@ Tide giải quyết bằng cách để nguyên setting của hệ thống cho m�
 
 - **Launch at Login** — tự khởi động cùng macOS (chỉ hoạt động khi chạy từ bản `.app` đã đóng gói).
 - **Tự động cập nhật** — mỗi lần mở app tự kiểm tra ngầm bản mới trên GitHub Releases (im lặng nếu đã mới nhất); có bản mới thì hỏi cài luôn: tải `.zip` của release, giải nén, thay thế `/Applications/Tide.app` rồi tự khởi động lại. Kiểm tra thủ công bằng nút **Check for Updates…** trong Settings → General.
-- Không có icon ở Dock (`LSUIElement`), chỉ nằm trên menu bar — trừ lúc cửa sổ Settings đang mở, khi đó app hiện ở Dock và ⌘-Tab như app bình thường, đóng cửa sổ là ẩn lại.
+- Không có icon ở Dock (`LSUIElement`), chỉ nằm trên menu bar — trừ lúc cửa sổ Settings đang mở, khi đó app hiện ở Dock và ⌘-Tab như app bình thường, đóng cửa sổ là ẩn lại. Nếu Dock vẫn còn icon Tide sau khi đóng Settings thì đó là mục **recent apps** của macOS (Dock ghi lại mọi app từng chạy ở foreground, app không tự gỡ được): tắt "Show suggested and recent apps in Dock" trong System Settings → Desktop & Dock.
 
 ## Cửa sổ Settings
 

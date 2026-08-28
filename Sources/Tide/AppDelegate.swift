@@ -433,8 +433,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.scrollDirectionManager.isRunning ?? false
         }
         controller.onWindowClose = {
-            // Back to menu-bar-only once Settings is gone.
-            NSApp.setActivationPolicy(.accessory)
+            // Back to menu-bar-only once Settings is gone — but only on
+            // the next run loop pass: windowWillClose fires while the
+            // window is still on screen and the app still frontmost, and
+            // switching policy at that point leaves the Dock tile behind
+            // until something else happens to deactivate the app.
+            // Deactivating right after is what actually retires the tile.
+            DispatchQueue.main.async {
+                NSApp.setActivationPolicy(.accessory)
+                NSApp.deactivate()
+            }
         }
         settingsWindowController = controller
         return controller
