@@ -66,12 +66,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             }
         }
 
-        // Bundled PNGs rather than SF Symbol badges — filenames match the
-        // resource names copied into the app bundle by build_app.sh. All
-        // but the Display one came from macosicons.com; that one is drawn
-        // to the same recipe (blue squircle filling the whole canvas, so
-        // the sidebar badge's shadow has no transparent margin to turn
-        // into a black ring).
+        // Bundled PNGs (from macosicons.com) rather than SF Symbol badges —
+        // filenames match the resource names copied into the app bundle by
+        // build_app.sh. Each is cropped so the artwork fills the whole
+        // canvas: a transparent margin leaves the badge's drop shadow
+        // tracing the canvas edge instead of the icon, which reads as a
+        // black ring around it.
         var iconResourceName: String {
             switch self {
             case .general: return "SidebarGeneralIcon"
