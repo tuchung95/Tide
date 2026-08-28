@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var captureMenuItems: [ShortcutAction: NSMenuItem] = [:]
 
     private let networkMonitor = NetworkMonitor()
+    private let scrollDirectionManager = ScrollDirectionManager()
     private let screenshotManager = ScreenshotManager()
     private lazy var captureSound = Bundle.main.url(forResource: "CaptureSound", withExtension: "mp3")
         .flatMap { NSSound(contentsOf: $0, byReference: true) }
@@ -35,6 +36,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for action in ShortcutAction.allCases {
             registerHotKey(for: action)
         }
+
+        // Silent at launch: if Accessibility permission was revoked, the
+        // manager just keeps retrying in the background instead of
+        // ambushing the user with a prompt every time they log in.
+        scrollDirectionManager.onStarted = { [weak self] in
+            self?.settingsWindowController?.refreshScrollStatus()
+        }
+        scrollDirectionManager.onTapCreationFailedWhileTrusted = { [weak self] in
+            self?.offerRelaunchForScrollPermission()
+        }
+        scrollDirectionManager.apply()
 
         // First poll establishes the baseline sample; the first real
         // reading appears one refreshInterval later.
@@ -114,6 +126,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func applySpeedMeterSettingsChange() {
         restartUpdateTimer()
         refreshSpeed()
+    }
+
+    /// Called after any Scrolling setting changes. Unlike launch, this is
+    /// a direct user action, so a missing Accessibility permission is
+    /// worth surfacing right here instead of silently doing nothing.
+    private func applyScrollSettingsChange() {
+        guard scrollDirectionManager.apply() == .needsAccessibility else { return }
+
+        // Shows macOS's own prompt (which offers to open the right
+        // settings pane); the manager keeps polling and starts by itself
+        // once permission lands, so there's nothing more to do here.
+        guard !scrollDirectionManager.requestAccessibilityPermission() else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Accessibility Permission Needed"
+        alert.informativeText = "Tide needs Accessibility access to change scroll direction per device.\n\nEnable Tide in System Settings > Privacy & Security > Accessibility. Reversing starts as soon as it's granted — no restart needed."
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Later")
+        if alert.runModal() == .alertFirstButtonReturn,
+           let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// macOS sometimes only hands a running process its new Accessibility
+    /// privilege after a relaunch, which leaves the app trusted but with
+    /// no working tap — the one situation the retry loop can't solve on
+    /// its own.
+    private func offerRelaunchForScrollPermission() {
+        let alert = NSAlert()
+        alert.messageText = "Relaunch Tide to Finish"
+        alert.informativeText = "Accessibility access is granted, but macOS only applies it to Tide after a restart."
+        alert.addButton(withTitle: "Relaunch")
+        alert.addButton(withTitle: "Later")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, _ in
+            DispatchQueue.main.async {
+                NSApp.terminate(nil)
+            }
+        }
     }
 
     private func refreshSpeed() {
@@ -343,12 +398,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.onSpeedMeterSettingsChanged = { [weak self] in
             self?.applySpeedMeterSettingsChange()
         }
+        controller.onScrollSettingsChanged = { [weak self] in
+            self?.applyScrollSettingsChange()
+        }
+        controller.isScrollReversingActive = { [weak self] in
+            self?.scrollDirectionManager.isRunning ?? false
+        }
         settingsWindowController = controller
         return controller
     }
 
     @objc private func openSettingsWindow() {
         let controller = makeSettingsWindowControllerIfNeeded()
+        // Permission may have been granted (or revoked) since the window
+        // was last open.
+        controller.refreshScrollStatus()
         NSApp.activate(ignoringOtherApps: true)
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)

@@ -22,11 +22,24 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// away instead of waiting for the next scheduled poll.
     var onSpeedMeterSettingsChanged: (() -> Void)?
 
+    /// Triggered after any Scrolling setting changes, so the app delegate
+    /// can install/remove the scroll event tap (and ask for Accessibility
+    /// permission the first time) right away.
+    var onScrollSettingsChanged: (() -> Void)?
+
+    /// Whether the scroll event tap is actually installed right now, so
+    /// the Scrolling pane can say so — the difference between "granted"
+    /// and "actually reversing" is otherwise invisible, and a stale
+    /// Accessibility grant (macOS keeps showing the app as enabled while
+    /// silently refusing it) looks exactly like the feature not working.
+    var isScrollReversingActive: (() -> Bool)?
+
     private enum Tab: Int, CaseIterable {
         case general
         case screenshot
         case shortcuts
         case speedMeter
+        case scrolling
 
         var title: String {
             switch self {
@@ -34,6 +47,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             case .screenshot: return "Screenshot"
             case .shortcuts: return "Shortcuts"
             case .speedMeter: return "Speed Meter"
+            case .scrolling: return "Scrolling"
             }
         }
 
@@ -46,6 +60,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             case .screenshot: return "SidebarScreenshotIcon"
             case .shortcuts: return "SidebarShortcutsIcon"
             case .speedMeter: return "SidebarSpeedMeterIcon"
+            case .scrolling: return "SidebarScrollingIcon"
             }
         }
     }
@@ -92,6 +107,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private var showDownloadSwitch: NSSwitch!
     private var speedUnitPopup: NSPopUpButton!
     private var refreshIntervalPopup: NSPopUpButton!
+    private var reverseScrollingSwitch: NSSwitch!
+    private var reverseMouseSwitch: NSSwitch!
+    private var reverseTrackpadSwitch: NSSwitch!
+    private var scrollStatusLabel: NSTextField!
 
     convenience init() {
         let window = NSWindow(
@@ -520,6 +539,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         case .screenshot: return buildScreenshotPane()
         case .shortcuts: return buildShortcutsPane()
         case .speedMeter: return buildSpeedMeterPane()
+        case .scrolling: return buildScrollingPane()
         }
     }
 
@@ -857,6 +877,116 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         refreshIntervalPopup.selectItem(at: Self.refreshIntervalOptions.firstIndex { $0.seconds == 1.0 } ?? 1)
 
         onSpeedMeterSettingsChanged?()
+    }
+
+    // MARK: - Scrolling pane
+
+    private func buildScrollingPane() -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 16
+
+        stack.addArrangedSubview(makePaneTitle("Scrolling"))
+
+        reverseScrollingSwitch = NSSwitch()
+        reverseScrollingSwitch.state = ScrollSettingsStore.isEnabled ? .on : .off
+        reverseScrollingSwitch.target = self
+        reverseScrollingSwitch.action = #selector(toggleReverseScrolling(_:))
+        let enabledRow = makeRow(leading: NSTextField(labelWithString: "Reverse Scroll Direction"), trailing: reverseScrollingSwitch)
+
+        reverseMouseSwitch = NSSwitch()
+        reverseMouseSwitch.state = ScrollSettingsStore.reverseMouse ? .on : .off
+        reverseMouseSwitch.target = self
+        reverseMouseSwitch.action = #selector(toggleReverseMouse(_:))
+        let mouseRow = makeRow(leading: NSTextField(labelWithString: "Reverse Mouse"), trailing: reverseMouseSwitch)
+
+        reverseTrackpadSwitch = NSSwitch()
+        reverseTrackpadSwitch.state = ScrollSettingsStore.reverseTrackpad ? .on : .off
+        reverseTrackpadSwitch.target = self
+        reverseTrackpadSwitch.action = #selector(toggleReverseTrackpad(_:))
+        let trackpadRow = makeRow(leading: NSTextField(labelWithString: "Reverse Trackpad"), trailing: reverseTrackpadSwitch)
+
+        let card = makeCard(rows: [enabledRow, mouseRow, trackpadRow])
+        card.widthAnchor.constraint(equalToConstant: 460).isActive = true
+        stack.addArrangedSubview(card)
+
+        let caption = NSTextField(wrappingLabelWithString: "macOS shares one “Natural scrolling” setting across every device. Leave it set for one device and reverse the other one here. Requires Accessibility permission.")
+        caption.font = NSFont.systemFont(ofSize: 11)
+        caption.textColor = .secondaryLabelColor
+        caption.widthAnchor.constraint(equalToConstant: 460).isActive = true
+        stack.addArrangedSubview(caption)
+
+        scrollStatusLabel = NSTextField(wrappingLabelWithString: "")
+        scrollStatusLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        scrollStatusLabel.widthAnchor.constraint(equalToConstant: 460).isActive = true
+        stack.addArrangedSubview(scrollStatusLabel)
+
+        let resetButton = NSButton(title: "Restore Defaults", target: self, action: #selector(restoreScrollingDefaults))
+        resetButton.bezelStyle = .rounded
+        stack.addArrangedSubview(resetButton)
+
+        updateScrollingSubSwitchAvailability()
+        refreshScrollStatus()
+        return stack
+    }
+
+    /// Reads live state every time rather than caching: Accessibility can
+    /// be granted (or revoked) in System Settings while this window sits
+    /// open, and the tap starts by itself a moment later.
+    func refreshScrollStatus() {
+        guard scrollStatusLabel != nil else { return }
+        if !ScrollSettingsStore.isActive {
+            scrollStatusLabel.stringValue = "Status: off"
+            scrollStatusLabel.textColor = .secondaryLabelColor
+        } else if isScrollReversingActive?() == true {
+            scrollStatusLabel.stringValue = "Status: active — reversing scroll events."
+            scrollStatusLabel.textColor = .systemGreen
+        } else {
+            scrollStatusLabel.stringValue = "Status: waiting for Accessibility permission. If Tide already looks enabled in System Settings, switch it off and on again — macOS keeps grants tied to a specific build, so an older entry stays listed but no longer counts."
+            scrollStatusLabel.textColor = .systemOrange
+        }
+    }
+
+    /// The per-device switches only mean anything while the master switch
+    /// is on, so they dim with it rather than silently doing nothing.
+    private func updateScrollingSubSwitchAvailability() {
+        let enabled = reverseScrollingSwitch.state == .on
+        reverseMouseSwitch.isEnabled = enabled
+        reverseTrackpadSwitch.isEnabled = enabled
+    }
+
+    @objc private func toggleReverseScrolling(_ sender: NSSwitch) {
+        ScrollSettingsStore.isEnabled = sender.state == .on
+        updateScrollingSubSwitchAvailability()
+        onScrollSettingsChanged?()
+        refreshScrollStatus()
+    }
+
+    @objc private func toggleReverseMouse(_ sender: NSSwitch) {
+        ScrollSettingsStore.reverseMouse = sender.state == .on
+        onScrollSettingsChanged?()
+        refreshScrollStatus()
+    }
+
+    @objc private func toggleReverseTrackpad(_ sender: NSSwitch) {
+        ScrollSettingsStore.reverseTrackpad = sender.state == .on
+        onScrollSettingsChanged?()
+        refreshScrollStatus()
+    }
+
+    @objc private func restoreScrollingDefaults() {
+        ScrollSettingsStore.isEnabled = false
+        ScrollSettingsStore.reverseMouse = true
+        ScrollSettingsStore.reverseTrackpad = false
+
+        reverseScrollingSwitch.state = .off
+        reverseMouseSwitch.state = .on
+        reverseTrackpadSwitch.state = .off
+        updateScrollingSubSwitchAvailability()
+
+        onScrollSettingsChanged?()
+        refreshScrollStatus()
     }
 
     // MARK: - Shortcuts pane
