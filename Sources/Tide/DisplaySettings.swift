@@ -18,6 +18,7 @@ enum DisplaySettingsStore {
     private static let defaults = UserDefaults.standard
     private static let isEnabledKey = "Display.isEnabled"
     private static let forceGammaKey = "Display.forceGamma"
+    private static let useVolumeKeysKey = "Display.useVolumeKeys"
     private static let gammaBrightnessKeyPrefix = "Display.brightness."
 
     /// Master switch for the whole Displays section of the menu. On by
@@ -26,6 +27,17 @@ enum DisplaySettingsStore {
     static var isEnabled: Bool {
         get { defaults.object(forKey: isEnabledKey) as? Bool ?? true }
         set { defaults.set(newValue, forKey: isEnabledKey) }
+    }
+
+    /// Whether the keyboard's volume keys should drive an external
+    /// monitor's speakers when macOS can't (see MonitorVolumeKeyManager).
+    ///
+    /// Off by default: it needs the Accessibility permission, so — like
+    /// ScrollSettingsStore.isEnabled — the app only asks once the user has
+    /// actually asked for the feature.
+    static var useVolumeKeys: Bool {
+        get { defaults.object(forKey: useVolumeKeysKey) as? Bool ?? false }
+        set { defaults.set(newValue, forKey: useVolumeKeysKey) }
     }
 
     /// Debug escape hatch: routes every external display through the gamma

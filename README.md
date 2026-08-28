@@ -39,7 +39,18 @@ macOS chỉ cho chỉnh độ sáng của màn hình built-in; với màn hình 
 - **DDC/CI** là giao thức mà chính menu OSD của monitor dùng, chạy qua cáp video, nên chỉnh từ Tide giống hệt bấm nút trên màn. Hầu hết monitor rời đều hỗ trợ; TV, màn qua hub/KVM rẻ tiền thì thường không.
 - Màn không có DDC sẽ rơi về **làm mờ bằng gamma**: hình tối đi nhưng đèn nền vẫn sáng như cũ, nên mất một ít độ tương phản ở vùng tối. Chỉ dùng khi không còn cách nào khác, và chỉ giảm được xuống 25% chứ không tắt hẳn (màn đen thui thì không còn thấy menu để chỉnh lại). Đây cũng là giá trị duy nhất Tide tự nhớ — macOS đã nhớ độ sáng màn built-in, monitor DDC nhớ trong firmware của nó, còn gamma thì mất sạch mỗi khi thoát app hoặc rút cáp.
 - Cắm/rút màn hình thì menu tự cập nhật (chờ 1.5s cho sắp xếp màn hình ổn định rồi mới dò, vì monitor đang khởi động không trả lời DDC).
-- Không cần cấp quyền gì thêm.
+- Riêng phần slider không cần cấp quyền gì thêm.
+
+### Phím âm lượng cho loa màn hình
+
+Khi chọn output âm thanh là màn hình ngoài, phím tăng/giảm âm lượng trên bàn phím **không làm gì cả** — macOS hiện dấu cấm. Lý do: thiết bị audio của màn hình qua HDMI/DisplayPort thường không có thuộc tính âm lượng nào để hệ thống chỉnh.
+
+- Bật **Volume Keys Control Monitor Speakers** trong Settings → Display, rồi dùng phím tăng/giảm/tắt tiếng như bình thường — Tide bắt phím và chuyển thành lệnh DDC tới monitor.
+- Tide chỉ nhận phím khi macOS **thật sự không chỉnh được** output hiện tại (kiểm tra bằng `kAudioDevicePropertyVolumeScalar`). Đổi output về loa máy là phím trả lại cho macOS ngay, không cần tắt gì.
+- Bước nhảy 1/16 giống macOS; giữ `⇧⌥` để chỉnh tinh 1/64. Phím tắt tiếng hạ về 0 và nhớ mức cũ, bấm lại thì khôi phục.
+- Chọn đúng màn hình theo tên thiết bị audio (màn hình báo tên trùng với tên hiển thị, vd. `HX270S`); nếu không khớp thì chỉ chấp nhận khi có đúng một màn ngoài có loa — thà không nhận phím còn hơn chỉnh nhầm màn.
+- Vì phím đã bị Tide nuốt nên macOS không hiện HUD; Tide hiện **HUD riêng** ngay dưới icon menu bar, kèm tên màn hình và thanh mức.
+- Cần quyền **Accessibility** (dùng chung với tính năng đảo hướng cuộn).
 
 ### Hướng cuộn riêng cho chuột và trackpad
 
@@ -66,6 +77,8 @@ Dạng sidebar-tabs giống System Settings, chia theo chức năng. Mỗi nhóm
 
 ![Pane Screenshot](docs/pane-screenshot.png)
 
+**Display** — công tắc cho phím âm lượng điều khiển loa màn hình ngoài, kèm dòng trạng thái cho biết đang chạy hay còn chờ quyền. Các slider độ sáng/âm lượng nằm trong menu bar chứ không ở đây.
+
 **Speed Meter** — bật/tắt hiển thị tốc độ, chọn dòng ↑ ↓, đơn vị và nhịp cập nhật.
 
 ![Pane Speed Meter](docs/pane-speed-meter.png)
@@ -87,7 +100,7 @@ Yêu cầu macOS 13 (Ventura) trở lên.
 | Quyền | Dùng cho | Khi nào hỏi |
 |---|---|---|
 | **Screen Recording** | Chụp ảnh màn hình | Lần chụp đầu tiên |
-| **Accessibility** | Đảo hướng cuộn theo thiết bị | Khi bật Reverse Scroll Direction |
+| **Accessibility** | Đảo hướng cuộn theo thiết bị; bắt phím âm lượng cho loa màn hình | Khi bật Reverse Scroll Direction hoặc Volume Keys Control Monitor Speakers |
 
 Nếu System Settings đã hiện Tide được bật mà app vẫn báo thiếu quyền: tắt rồi bật lại mục Tide trong danh sách. macOS gắn quyền theo từng bản build, nên một entry cũ vẫn nằm trong danh sách nhưng không còn hiệu lực.
 

@@ -34,6 +34,17 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// silently refusing it) looks exactly like the feature not working.
     var isScrollReversingActive: (() -> Bool)?
 
+    /// Triggered after the volume key setting changes, so the app delegate
+    /// can install/remove the key tap (and ask for Accessibility the first
+    /// time) right away.
+    var onVolumeKeySettingsChanged: (() -> Void)?
+
+    /// Whether the volume key tap is actually installed, so the Display
+    /// pane can say so — same reasoning as isScrollReversingActive: a
+    /// stale Accessibility grant looks exactly like the feature not
+    /// working.
+    var isVolumeKeyTapActive: (() -> Bool)?
+
     /// Fired when this window closes, so the app delegate can drop the
     /// Dock icon it puts up while Settings is open.
     var onWindowClose: (() -> Void)?
@@ -42,6 +53,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         case general
         case screenshot
         case speedMeter
+        case display
         case scrolling
 
         var title: String {
@@ -49,18 +61,23 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             case .general: return "General"
             case .screenshot: return "Screenshot"
             case .speedMeter: return "Speed Meter"
+            case .display: return "Display"
             case .scrolling: return "Scrolling"
             }
         }
 
-        // Bundled PNGs (from macosicons.com) rather than SF Symbol badges —
-        // filenames match the resource names copied into the app bundle by
-        // build_app.sh.
+        // Bundled PNGs rather than SF Symbol badges — filenames match the
+        // resource names copied into the app bundle by build_app.sh. All
+        // but the Display one came from macosicons.com; that one is drawn
+        // to the same recipe (blue squircle filling the whole canvas, so
+        // the sidebar badge's shadow has no transparent margin to turn
+        // into a black ring).
         var iconResourceName: String {
             switch self {
             case .general: return "SidebarGeneralIcon"
             case .screenshot: return "SidebarScreenshotIcon"
             case .speedMeter: return "SidebarSpeedMeterIcon"
+            case .display: return "SidebarDisplayIcon"
             case .scrolling: return "SidebarScrollingIcon"
             }
         }
@@ -117,6 +134,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private var reverseMouseSwitch: NSSwitch!
     private var reverseTrackpadSwitch: NSSwitch!
     private var scrollStatusLabel: NSTextField!
+    private var volumeKeySwitch: NSSwitch!
+    private var volumeKeyStatusLabel: NSTextField!
 
     convenience init() {
         let window = NSWindow(
@@ -556,6 +575,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         case .general: return buildGeneralPane()
         case .screenshot: return buildScreenshotPane()
         case .speedMeter: return buildSpeedMeterPane()
+        case .display: return buildDisplayPane()
         case .scrolling: return buildScrollingPane()
         }
     }
@@ -701,7 +721,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         let updateRow = makeRow(leading: versionLabel, trailing: checkUpdatesButton)
 
         let card = makeCard(rows: [launchRow, updateRow])
-        card.widthAnchor.constraint(equalToConstant: 460).isActive = true
+        card.widthAnchor.constraint(equalToConstant: Self.paneCardWidth).isActive = true
         stack.addArrangedSubview(card)
 
         let creditLabel = NSTextField(labelWithString: "Created by Louis Chung")
@@ -714,6 +734,79 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     @objc private func toggleLaunchAtLogin(_ sender: NSSwitch) {
         LoginItemManager.isEnabled = sender.state == .on
+    }
+
+    // MARK: - Display pane
+
+    private func buildDisplayPane() -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 16
+
+        stack.addArrangedSubview(makePaneTitle("Display"))
+
+        volumeKeySwitch = NSSwitch()
+        volumeKeySwitch.state = DisplaySettingsStore.useVolumeKeys ? .on : .off
+        volumeKeySwitch.target = self
+        volumeKeySwitch.action = #selector(toggleVolumeKeys(_:))
+        let volumeKeyRow = makeRow(
+            leading: NSTextField(labelWithString: "Volume Keys Control Monitor Speakers"),
+            trailing: volumeKeySwitch
+        )
+
+        let card = makeCard(rows: [volumeKeyRow])
+        card.widthAnchor.constraint(equalToConstant: Self.paneCardWidth).isActive = true
+        stack.addArrangedSubview(card)
+
+        let caption = NSTextField(wrappingLabelWithString: "Brightness and volume sliders for every connected display live in Tide’s menu bar menu.\n\nWhen sound plays through a monitor’s own speakers, macOS can’t change their volume and the volume keys do nothing. Turn this on to let Tide handle those keys over DDC instead. Requires Accessibility permission.")
+        caption.font = NSFont.systemFont(ofSize: 11)
+        caption.textColor = .secondaryLabelColor
+
+        volumeKeyStatusLabel = NSTextField(wrappingLabelWithString: "")
+        volumeKeyStatusLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+
+        // Its own card rather than more rows in the one above: the copy and
+        // the status line describe the setting, they aren't settings
+        // themselves — same treatment as the Scrolling pane.
+        let notesCard = makeCard(rows: [makeTextRow(labels: [caption, volumeKeyStatusLabel])])
+        notesCard.widthAnchor.constraint(equalToConstant: Self.paneCardWidth).isActive = true
+        stack.addArrangedSubview(notesCard)
+
+        let resetButton = NSButton(title: "Restore Defaults", target: self, action: #selector(restoreDisplayDefaults))
+        resetButton.bezelStyle = .rounded
+        stack.addArrangedSubview(resetButton)
+
+        refreshVolumeKeyStatus()
+
+        return stack
+    }
+
+    @objc private func restoreDisplayDefaults() {
+        DisplaySettingsStore.useVolumeKeys = false
+        volumeKeySwitch.state = .off
+        onVolumeKeySettingsChanged?()
+        refreshVolumeKeyStatus()
+    }
+
+    @objc private func toggleVolumeKeys(_ sender: NSSwitch) {
+        DisplaySettingsStore.useVolumeKeys = sender.state == .on
+        onVolumeKeySettingsChanged?()
+        refreshVolumeKeyStatus()
+    }
+
+    func refreshVolumeKeyStatus() {
+        guard volumeKeyStatusLabel != nil else { return }
+        if !DisplaySettingsStore.useVolumeKeys {
+            volumeKeyStatusLabel.stringValue = "Status: off"
+            volumeKeyStatusLabel.textColor = .secondaryLabelColor
+        } else if isVolumeKeyTapActive?() == true {
+            volumeKeyStatusLabel.stringValue = "Status: active — the volume keys reach the monitor whenever macOS can’t control the current output itself."
+            volumeKeyStatusLabel.textColor = .systemGreen
+        } else {
+            volumeKeyStatusLabel.stringValue = "Status: waiting for Accessibility permission. If Tide already looks enabled in System Settings, switch it off and on again — macOS keeps grants tied to a specific build, so an older entry stays listed but no longer counts."
+            volumeKeyStatusLabel.textColor = .systemOrange
+        }
     }
 
     @objc private func checkForUpdatesTapped() {

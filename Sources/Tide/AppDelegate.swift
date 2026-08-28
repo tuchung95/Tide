@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let networkMonitor = NetworkMonitor()
     private let scrollDirectionManager = ScrollDirectionManager()
     private let displayController = DisplayController()
+    private lazy var volumeKeyManager = MonitorVolumeKeyManager(displayController: displayController)
+    private let volumeHUD = VolumeHUD()
     private let screenshotManager = ScreenshotManager()
     private lazy var captureSound = Bundle.main.url(forResource: "CaptureSound", withExtension: "mp3")
         .flatMap { NSSound(contentsOf: $0, byReference: true) }
@@ -55,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.settingsWindowController?.refreshScrollStatus()
         }
         scrollDirectionManager.onTapCreationFailedWhileTrusted = { [weak self] in
-            self?.offerRelaunchForScrollPermission()
+            self?.offerRelaunchForAccessibility()
         }
         scrollDirectionManager.apply()
 
@@ -66,6 +68,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.rebuildDisplaySection()
         }
         displayController.start()
+
+        // Same silent-at-launch treatment as the scroll tap: if the
+        // Accessibility permission has gone away, retry quietly in the
+        // background rather than prompting on every login.
+        volumeKeyManager.onVolumeChanged = { [weak self] displayName, volume in
+            guard let self else { return }
+            self.volumeHUD.show(title: displayName, level: volume, anchoredTo: self.statusItem.button)
+        }
+        volumeKeyManager.onStarted = { [weak self] in
+            self?.settingsWindowController?.refreshVolumeKeyStatus()
+        }
+        volumeKeyManager.onTapCreationFailedWhileTrusted = { [weak self] in
+            self?.offerRelaunchForAccessibility()
+        }
+        volumeKeyManager.apply()
 
         // First poll establishes the baseline sample; the first real
         // reading appears one refreshInterval later.
@@ -179,11 +196,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Called after the volume key setting changes. Same shape as
+    /// applyScrollSettingsChange: a direct user action, so a missing
+    /// Accessibility permission is worth surfacing right away.
+    private func applyVolumeKeySettingsChange() {
+        guard volumeKeyManager.apply() == .needsAccessibility else { return }
+        guard !volumeKeyManager.requestAccessibilityPermission() else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Accessibility Permission Needed"
+        alert.informativeText = "Tide needs Accessibility access to catch the volume keys before macOS does.\n\nEnable Tide in System Settings > Privacy & Security > Accessibility. The keys start working as soon as it's granted — no restart needed."
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Later")
+        if alert.runModal() == .alertFirstButtonReturn,
+           let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     /// macOS sometimes only hands a running process its new Accessibility
     /// privilege after a relaunch, which leaves the app trusted but with
     /// no working tap — the one situation the retry loop can't solve on
     /// its own.
-    private func offerRelaunchForScrollPermission() {
+    private func offerRelaunchForAccessibility() {
         let alert = NSAlert()
         alert.messageText = "Relaunch Tide to Finish"
         alert.informativeText = "Accessibility access is granted, but macOS only applies it to Tide after a restart."
@@ -479,15 +514,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Copied") in the menu bar with a short sound, then reverts to the
     /// current speed reading.
     private func showCaptureConfirmation(destinations: ScreenshotManager.Destinations) {
-        feedbackResetWorkItem?.cancel()
-        isShowingCaptureFeedback = true
-        statusItem.button?.image = nil
-        statusItem.button?.title = Self.confirmationLabel(for: destinations)
+        flashStatusMessage(Self.confirmationLabel(for: destinations))
 
         if let captureSound {
             captureSound.stop()
             captureSound.play()
         }
+    }
+
+    /// Briefly replaces the speed reading in the menu bar with `message`,
+    /// then puts the speed back.
+    private func flashStatusMessage(_ message: String) {
+        feedbackResetWorkItem?.cancel()
+        isShowingCaptureFeedback = true
+        statusItem.button?.image = nil
+        statusItem.button?.title = message
 
         let resetWorkItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -496,8 +537,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.statusItem.button?.image = self.lastSpeedImage
         }
         feedbackResetWorkItem = resetWorkItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: resetWorkItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.statusFlashDuration, execute: resetWorkItem)
     }
+
+    private static let statusFlashDuration: TimeInterval = 1.2
 
     private static func confirmationLabel(for destinations: ScreenshotManager.Destinations) -> String {
         switch (destinations.contains(.file), destinations.contains(.clipboard)) {
@@ -562,6 +605,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.isScrollReversingActive = { [weak self] in
             self?.scrollDirectionManager.isRunning ?? false
         }
+        controller.onVolumeKeySettingsChanged = { [weak self] in
+            self?.applyVolumeKeySettingsChange()
+        }
+        controller.isVolumeKeyTapActive = { [weak self] in
+            self?.volumeKeyManager.isRunning ?? false
+        }
         controller.onWindowClose = {
             // Back to menu-bar-only once Settings is gone — but only on
             // the next run loop pass: windowWillClose fires while the
@@ -583,6 +632,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Permission may have been granted (or revoked) since the window
         // was last open.
         controller.refreshScrollStatus()
+        controller.refreshVolumeKeyStatus()
         // The app is LSUIElement, so it normally has no Dock icon and no
         // menu bar at all. While Settings is open it becomes a regular
         // app: the window then shows up in the Dock and in ⌘-Tab like any
