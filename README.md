@@ -79,6 +79,8 @@ Dạng sidebar-tabs giống System Settings, chia theo chức năng. Mỗi nhóm
 
 **Display** — công tắc cho phím âm lượng điều khiển loa màn hình ngoài, kèm dòng trạng thái cho biết đang chạy hay còn chờ quyền. Các slider độ sáng/âm lượng nằm trong menu bar chứ không ở đây.
 
+![Pane Display](docs/pane-display.png)
+
 **Speed Meter** — bật/tắt hiển thị tốc độ, chọn dòng ↑ ↓, đơn vị và nhịp cập nhật.
 
 ![Pane Speed Meter](docs/pane-speed-meter.png)
