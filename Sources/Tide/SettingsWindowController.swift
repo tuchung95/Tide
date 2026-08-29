@@ -104,19 +104,24 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private static let sidebarListTopInset: CGFloat = 42
     // Padding around each item's own content (icon/text) within its row —
     // applied on all four sides, since sidebarRowHeight is derived from it.
-    private static let sidebarItemPadding: CGFloat = 6
+    // 22pt badge + 5pt above and below lands the row on the 32pt System
+    // Settings uses, measured as the pitch between its sidebar icons.
+    private static let sidebarItemPadding: CGFloat = 5
     // Gap between a sidebar item's icon and its label text.
     private static let sidebarIconTextGap: CGFloat = 8
-    // Rendered size of a sidebar item's icon badge. The bundled PNGs are
-    // 256x256, so there is plenty of detail to scale down from.
-    private static let sidebarIconSize: CGFloat = 24
+    // Rendered size of a sidebar item's icon badge, measured off System
+    // Settings' own sidebar. The bundled PNGs are 256x256, so there is
+    // plenty of detail to scale down from.
+    private static let sidebarIconSize: CGFloat = 22
     // Corner radius of that badge. Shared with the shadow drawn behind it:
     // the two have to agree, or the shadow shows past the icon's corners
     // on one side of the rounding and falls short on the other.
     private static let sidebarIconCornerRadius: CGFloat = 7
-    // Padding around a pane's content, inside root (leading/top; trailing
-    // is capped, not padded, since panes don't have a fixed right edge).
-    private static let panePadding: CGFloat = 24
+    // Gap between a pane's content and everything around it: the window's
+    // top, trailing and bottom edges, and the sidebar card on its left.
+    // One flat value rather than card margin + inset, so the number here
+    // is the distance actually seen on screen.
+    private static let panePadding: CGFloat = 20
     // Padding around a small group card's rows, inside its own box.
     private static let smallCardPadding: CGFloat = 14
     // Minimum gap between a row's label and its trailing control.
@@ -126,6 +131,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     // Size of every toggle in the window (see makeSwitch). One step down
     // from the default, which reads less heavy next to the 13pt row labels.
     private static let switchControlSize: NSControl.ControlSize = .small
+    // The dot carrying a status line's state, and its gap to the text.
+    private static let statusDotSize: CGFloat = 8
+    private static let statusDotGap: CGFloat = 6
     // Vertical padding around a text-only card row (makeTextRow), which
     // sizes to its text rather than to rowHeight.
     private static let textRowVerticalPadding: CGFloat = 12
@@ -147,6 +155,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private var reverseMouseSwitch: NSSwitch!
     private var reverseTrackpadSwitch: NSSwitch!
     private var scrollStatusLabel: NSTextField!
+    private var scrollStatusDot: NSBox!
+    private var volumeKeyStatusDot: NSBox!
     private var volumeKeySwitch: NSSwitch!
     private var volumeKeyStatusLabel: NSTextField!
 
@@ -213,26 +223,51 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         window?.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window?.standardWindowButton(.zoomButton)?.isHidden = true
 
-        let lights: [(NSColor, () -> Void)] = [
-            (NSColor(red: 1.0, green: 0.373, blue: 0.341, alpha: 1), { [weak self] in self?.window?.performClose(nil) }),
-            (NSColor(red: 1.0, green: 0.741, blue: 0.180, alpha: 1), { [weak self] in self?.window?.performMiniaturize(nil) }),
-            (NSColor(red: 0.157, green: 0.784, blue: 0.251, alpha: 1), { [weak self] in self?.window?.performZoom(nil) })
+        // Whether each button does anything is read off the window's own
+        // style mask rather than assumed: this window is .closable only, so
+        // the other two would call performMiniaturize/performZoom into
+        // nothing. Painting all three live regardless advertises actions
+        // that don't exist — macOS greys out the ones a window can't do.
+        let styleMask = window?.styleMask ?? []
+        let lights: [(NSColor, Bool, () -> Void)] = [
+            (NSColor(red: 1.0, green: 0.373, blue: 0.341, alpha: 1),
+             styleMask.contains(.closable),
+             { [weak self] in self?.window?.performClose(nil) }),
+            (NSColor(red: 1.0, green: 0.741, blue: 0.180, alpha: 1),
+             styleMask.contains(.miniaturizable),
+             { [weak self] in self?.window?.performMiniaturize(nil) }),
+            (NSColor(red: 0.157, green: 0.784, blue: 0.251, alpha: 1),
+             styleMask.contains(.resizable),
+             { [weak self] in self?.window?.performZoom(nil) })
         ]
 
-        for (index, light) in lights.enumerated() {
+        let symbols: [TrafficLightButton.Symbol] = [.close, .minimize, .zoom]
+        let buttons = lights.enumerated().map { index, light -> TrafficLightButton in
             let button = TrafficLightButton()
-            button.diameter = Self.trafficLightDiameter
             button.color = light.0
-            button.onClick = light.1
-            button.translatesAutoresizingMaskIntoConstraints = false
-            root.addSubview(button)
-            NSLayoutConstraint.activate([
-                button.widthAnchor.constraint(equalToConstant: Self.trafficLightDiameter),
-                button.heightAnchor.constraint(equalToConstant: Self.trafficLightDiameter),
-                button.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.trafficLightLeading + CGFloat(index) * Self.trafficLightSpacing),
-                button.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.trafficLightTop)
-            ])
+            button.isEnabled = light.1
+            button.onClick = light.2
+            button.symbol = symbols[index]
+            button.frame = NSRect(
+                x: CGFloat(index) * Self.trafficLightSpacing, y: 0,
+                width: Self.trafficLightDiameter, height: Self.trafficLightDiameter
+            )
+            return button
         }
+
+        // The three sit in one group so a single tracking area covers them
+        // all: macOS reveals the symbols on every button as soon as the
+        // pointer is anywhere over the cluster, and per-button tracking
+        // would instead blink them off and on while crossing the gaps.
+        let group = TrafficLightGroup(buttons: buttons)
+        group.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(group)
+        NSLayoutConstraint.activate([
+            group.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.trafficLightLeading),
+            group.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.trafficLightTop),
+            group.widthAnchor.constraint(equalToConstant: Self.trafficLightSpacing * 2 + Self.trafficLightDiameter),
+            group.heightAnchor.constraint(equalToConstant: Self.trafficLightDiameter)
+        ])
     }
 
     // MARK: - Window layout
@@ -243,17 +278,26 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// flat white card — sitting with a margin on a plain white/light
     /// window backdrop. This mirrors that rather than one edge-to-edge
     /// split view.
-    private static let cardMargin: CGFloat = 10
-    private static let cardGap: CGFloat = 10
-    private static let cardCornerRadius: CGFloat = 24
+    private static let cardMargin: CGFloat = 8
+    // Rounding of the window's own backdrop. Named like every other
+    // radius in here rather than left as a literal at the call site.
+    private static let windowCornerRadius: CGFloat = 24
+    private static let cardCornerRadius: CGFloat = 16
     // How much bigger than the sidebar card its DropShadowView is made, on
     // every side, matching that shadow's blurRadius (12) + offset (1).
     // Bigger than cardMargin, so the shadow gets clipped at the window's
     // own edge before fully fading out — acceptable now that it's subtle.
     private static let cardShadowPadding: CGFloat = 13
-    // The small group cards in the right-hand panes get their own,
-    // smaller radius rather than sharing the sidebar's.
-    private static let smallCardCornerRadius: CGFloat = 12
+    // The small group cards in the right-hand panes get their own, smaller
+    // radius rather than sharing the sidebar's.
+    //
+    // Matched to System Settings by measurement rather than by copying its
+    // number: its cards straighten out 16 retina pixels below their top
+    // edge. The number can't be copied because NSBox draws a circular
+    // corner while Apple draws a squircle, so the same radius produces a
+    // visibly tighter curve here — 8 measured 12px, and this is what lands
+    // on 16.
+    private static let smallCardCornerRadius: CGFloat = 11
     // Same as cardMargin: the sidebar card now runs all the way up to the
     // window's own top edge, sitting behind/under the traffic-light
     // buttons (which float above content as part of the window's
@@ -283,10 +327,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // sliver disappears. The traffic-light replacements below and the
         // sidebar card shadow both stay clear of that sliver by keeping
         // enough distance from the exact corner point along both axes.
-        root.cornerRadius = 30
-        // True white (255,255,255) in light mode, still Dark-Mode-aware
-        // (unlike a hardcoded literal white would be).
-        root.fillColor = .controlBackgroundColor
+        root.cornerRadius = Self.windowCornerRadius
+        root.fillColor = Self.pageFillColor
 
         let sidebarCard = buildSidebar()
         sidebarCard.translatesAutoresizingMaskIntoConstraints = false
@@ -311,16 +353,16 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             pane.isHidden = true
             root.addSubview(pane)
             NSLayoutConstraint.activate([
-                pane.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.cardTopMargin + Self.panePadding),
-                pane.leadingAnchor.constraint(equalTo: sidebarCard.trailingAnchor, constant: Self.cardGap + Self.panePadding),
-                pane.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -(Self.cardMargin + Self.panePadding)),
+                pane.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.panePadding),
+                pane.leadingAnchor.constraint(equalTo: sidebarCard.trailingAnchor, constant: Self.panePadding),
+                pane.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -Self.panePadding),
                 // Required inequality, so it also acts as the window's
                 // minimum height the way the trailing one already fixes
                 // its width: the tallest pane (Screenshot, two cards)
                 // would otherwise run past the window's bottom edge and
                 // get clipped, since panes are laid out from the top and
                 // nothing else drives the content height.
-                pane.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -(Self.cardMargin + Self.panePadding))
+                pane.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -Self.panePadding)
             ])
             panes[tab] = pane
         }
@@ -381,8 +423,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         background.boxType = .custom
         background.cornerRadius = Self.cardCornerRadius
         background.borderWidth = 1
-        background.borderColor = NSColor.white.withAlphaComponent(0.8)
-        background.fillColor = Self.smallCardFillColor
+        background.borderColor = Self.cardBorderColor
+        background.fillColor = Self.sidebarCardFillColor
         background.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(background)
@@ -601,20 +643,72 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     private func makePaneTitle(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
-        label.font = NSFont.systemFont(ofSize: 20, weight: .semibold)
+        // 22pt lands this on the same glyph height as System Settings' own
+        // pane title, measured on both: 16.5pt of cap height, where 20pt
+        // was giving 15.
+        label.font = NSFont.systemFont(ofSize: 22, weight: .semibold)
         return label
     }
 
 
-    /// #F7F7F7 in Light Mode — the exact requested value — with a dynamic
-    /// provider (rather than a plain literal NSColor) so it still adapts
-    /// to a reasonable dark-mode fill instead of staying frozen white-gray
-    /// when the system switches appearance.
-    private static let smallCardFillColor = NSColor(name: nil) { appearance in
+    /// Fill for the group cards in the panes: a translucent white wash, so
+    /// a card sits *lighter* than the page it is on.
+    ///
+    /// This only works because pageFillColor is a grey rather than white.
+    /// White over white is still white, which is what made an earlier
+    /// attempt at this vanish in Light Mode.
+    ///
+    /// Measured off System Settings: Light page #F6F6F6 with cards #F9F9F9;
+    /// Dark cards about 20% lighter than the page they sit on.
+    private static let groupCardFillColor = NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return NSColor.white.withAlphaComponent(isDark ? 0.03 : 0.33)
+    }
+
+    /// Fill for the sidebar card, which is deliberately *not* the same as
+    /// the group cards.
+    ///
+    /// System Settings moves the two in opposite directions in Dark Mode:
+    /// its group cards lift about 20% above the page while its sidebar
+    /// drops about 10% below it, the sidebar reading as a recess rather
+    /// than a raised panel. In Light Mode both sit lighter than the page,
+    /// so the two agree there.
+    private static let sidebarCardFillColor = NSColor(name: nil) { appearance in
         let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         return isDark
-            ? NSColor(white: 0.16, alpha: 1)
-            : NSColor(srgbRed: 0xF7 / 255, green: 0xF7 / 255, blue: 0xF7 / 255, alpha: 1)
+            ? NSColor.black.withAlphaComponent(0.10)
+            : NSColor.white.withAlphaComponent(0.33)
+    }
+
+    /// The window's backdrop. Explicit rather than .controlBackgroundColor,
+    /// which measured #FFFFFF in Light Mode — pure white leaves no room for
+    /// a card to be lighter than it. System Settings gets its own grey from
+    /// an NSVisualEffectView material, not from a semantic colour, so this
+    /// matches the measured result instead of the mechanism.
+    private static let pageFillColor = NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return isDark
+            ? NSColor(white: 0x1E / 255, alpha: 1)
+            : NSColor(white: 0xF6 / 255, alpha: 1)
+    }
+
+    /// The rim around the two big cards. White at 80% reads as a soft
+    /// highlight against a light window, but the same value on a dark one
+    /// is a hard white outline drawn around everything (the fill behind it
+    /// is only 0.16 white), so Dark Mode gets a far lower opacity.
+    private static let cardBorderColor = NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return NSColor.white.withAlphaComponent(isDark ? 0.12 : 0.8)
+    }
+
+    /// Hairline between a card's rows. Same problem as cardBorderColor: a
+    /// fixed near-white is a faint line on a light card and a bright one
+    /// on a dark card.
+    private static let cardDividerColor = NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return isDark
+            ? NSColor.white.withAlphaComponent(0.12)
+            : NSColor(white: 0.9, alpha: 1)
     }
 
     /// A rounded, filled group box with hairline dividers between its rows
@@ -627,7 +721,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // Now that the page itself is pure white, the card needs its own
         // gray fill to read as a distinct card at all — controlBackgroundColor
         // (also white) was flush with the page and invisible.
-        box.fillColor = Self.smallCardFillColor
+        box.fillColor = Self.groupCardFillColor
         box.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView()
@@ -647,7 +741,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
                 let divider = NSBox()
                 divider.boxType = .custom
                 divider.borderWidth = 0
-                divider.fillColor = NSColor(white: 0.9, alpha: 1)
+                divider.fillColor = Self.cardDividerColor
                 divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
                 stack.addArrangedSubview(divider)
             }
@@ -667,7 +761,55 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// explanatory copy and live status that belong to the group above
     /// them, so they sit inside the same card rather than loose beneath
     /// it. Height comes from the text, unlike makeRow's fixed rowHeight.
-    private func makeTextRow(labels: [NSTextField]) -> NSView {
+    /// A status line in the System Settings idiom: a coloured dot carries
+    /// the state and the sentence stays in ordinary text. Tinting the whole
+    /// sentence instead makes it read as a warning even when it is just
+    /// reporting that everything is fine.
+    private func makeStatusRow(dot: NSBox, label: NSTextField) -> NSView {
+        let row = NSView()
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        label.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(dot)
+        row.addSubview(label)
+
+        label.preferredMaxLayoutWidth = Self.paneCardWidth - Self.smallCardPadding * 2
+            - Self.statusDotSize - Self.statusDotGap
+
+        NSLayoutConstraint.activate([
+            dot.widthAnchor.constraint(equalToConstant: Self.statusDotSize),
+            dot.heightAnchor.constraint(equalToConstant: Self.statusDotSize),
+            dot.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            // Tied to the first line's baseline rather than to the row's
+            // centre, so the dot stays beside the opening words instead of
+            // drifting down the side of a wrapped paragraph.
+            dot.bottomAnchor.constraint(equalTo: label.firstBaselineAnchor, constant: -1),
+
+            label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: Self.statusDotGap),
+            label.topAnchor.constraint(equalTo: row.topAnchor),
+            label.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            label.bottomAnchor.constraint(equalTo: row.bottomAnchor)
+        ])
+        return row
+    }
+
+    /// Sets a status line's text and tints both the dot and the sentence
+    /// from one colour, so the two can't drift apart.
+    private func applyStatus(dot: NSBox, label: NSTextField, _ text: String, _ color: NSColor) {
+        label.stringValue = text
+        label.textColor = color
+        dot.fillColor = color
+    }
+
+    private func makeStatusDot() -> NSBox {
+        let dot = NSBox()
+        dot.boxType = .custom
+        dot.borderWidth = 0
+        dot.cornerRadius = Self.statusDotSize / 2
+        dot.fillColor = .secondaryLabelColor
+        return dot
+    }
+
+    private func makeTextRow(labels: [NSView]) -> NSView {
         let row = NSView()
         let textStack = NSStackView(views: labels)
         textStack.orientation = .vertical
@@ -676,10 +818,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         textStack.translatesAutoresizingMaskIntoConstraints = false
         row.addSubview(textStack)
 
-        for label in labels {
-            // Wrapping NSTextFields need an explicit wrap width to report
-            // the right height to Auto Layout; the card's own width minus
-            // its padding is that width.
+        // Wrapping NSTextFields need an explicit wrap width to report the
+        // right height to Auto Layout; the card's own width minus its
+        // padding is that width. Views that aren't text (a status line,
+        // which sets its own narrower width) are left alone.
+        for case let label as NSTextField in labels {
             label.preferredMaxLayoutWidth = Self.paneCardWidth - Self.smallCardPadding * 2
         }
 
@@ -788,11 +931,20 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         volumeKeyStatusLabel = NSTextField(wrappingLabelWithString: "")
         volumeKeyStatusLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        volumeKeyStatusLabel.textColor = .secondaryLabelColor
 
         // Its own card rather than more rows in the one above: the copy and
         // the status line describe the setting, they aren't settings
         // themselves — same treatment as the Scrolling pane.
-        let notesCard = makeCard(rows: [makeTextRow(labels: [caption, volumeKeyStatusLabel])])
+        // One card, but as two rows so makeCard draws its hairline between
+        // them: the status is the line that changes while the window is
+        // open, and running straight into a static paragraph made it read
+        // as part of the same sentence.
+        volumeKeyStatusDot = makeStatusDot()
+        let notesCard = makeCard(rows: [
+            makeTextRow(labels: [makeStatusRow(dot: volumeKeyStatusDot, label: volumeKeyStatusLabel)]),
+            makeTextRow(labels: [caption])
+        ])
         notesCard.widthAnchor.constraint(equalToConstant: Self.paneCardWidth).isActive = true
         stack.addArrangedSubview(notesCard)
 
@@ -821,14 +973,16 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     func refreshVolumeKeyStatus() {
         guard volumeKeyStatusLabel != nil else { return }
         if !DisplaySettingsStore.useVolumeKeys {
-            volumeKeyStatusLabel.stringValue = "Status: off"
-            volumeKeyStatusLabel.textColor = .secondaryLabelColor
+            applyStatus(dot: volumeKeyStatusDot, label: volumeKeyStatusLabel,
+                        "Off", .secondaryLabelColor)
         } else if isVolumeKeyTapActive?() == true {
-            volumeKeyStatusLabel.stringValue = "Status: active — the volume keys reach the monitor whenever macOS can’t control the current output itself."
-            volumeKeyStatusLabel.textColor = .systemGreen
+            applyStatus(dot: volumeKeyStatusDot, label: volumeKeyStatusLabel,
+                        "Active — the volume keys reach the monitor whenever macOS can’t control the current output itself.",
+                        .systemGreen)
         } else {
-            volumeKeyStatusLabel.stringValue = "Status: waiting for Accessibility permission. If Tide already looks enabled in System Settings, switch it off and on again — macOS keeps grants tied to a specific build, so an older entry stays listed but no longer counts."
-            volumeKeyStatusLabel.textColor = .systemOrange
+            applyStatus(dot: volumeKeyStatusDot, label: volumeKeyStatusLabel,
+                        "Waiting for Accessibility permission. If Tide already looks enabled in System Settings, switch it off and on again — macOS keeps grants tied to a specific build, so an older entry stays listed but no longer counts.",
+                        .systemOrange)
         }
     }
 
@@ -1063,6 +1217,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         scrollStatusLabel = NSTextField(wrappingLabelWithString: "")
         scrollStatusLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        scrollStatusLabel.textColor = .secondaryLabelColor
 
         let card = makeCard(rows: [enabledRow, mouseRow, trackpadRow])
         card.widthAnchor.constraint(equalToConstant: Self.paneCardWidth).isActive = true
@@ -1071,7 +1226,15 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // Its own card rather than a fourth row in the one above: the copy
         // and the status line describe the whole group, they aren't one
         // more setting in it.
-        let notesCard = makeCard(rows: [makeTextRow(labels: [caption, scrollStatusLabel])])
+        // One card, but as two rows so makeCard draws its hairline between
+        // them: the status is the line that changes while the window is
+        // open, and running straight into a static paragraph made it read
+        // as part of the same sentence.
+        scrollStatusDot = makeStatusDot()
+        let notesCard = makeCard(rows: [
+            makeTextRow(labels: [makeStatusRow(dot: scrollStatusDot, label: scrollStatusLabel)]),
+            makeTextRow(labels: [caption])
+        ])
         notesCard.widthAnchor.constraint(equalToConstant: Self.paneCardWidth).isActive = true
         stack.addArrangedSubview(notesCard)
 
@@ -1090,14 +1253,15 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     func refreshScrollStatus() {
         guard scrollStatusLabel != nil else { return }
         if !ScrollSettingsStore.isActive {
-            scrollStatusLabel.stringValue = "Status: off"
-            scrollStatusLabel.textColor = .secondaryLabelColor
+            applyStatus(dot: scrollStatusDot, label: scrollStatusLabel,
+                        "Off", .secondaryLabelColor)
         } else if isScrollReversingActive?() == true {
-            scrollStatusLabel.stringValue = "Status: active — reversing scroll events."
-            scrollStatusLabel.textColor = .systemGreen
+            applyStatus(dot: scrollStatusDot, label: scrollStatusLabel,
+                        "Active — reversing scroll events.", .systemGreen)
         } else {
-            scrollStatusLabel.stringValue = "Status: waiting for Accessibility permission. If Tide already looks enabled in System Settings, switch it off and on again — macOS keeps grants tied to a specific build, so an older entry stays listed but no longer counts."
-            scrollStatusLabel.textColor = .systemOrange
+            applyStatus(dot: scrollStatusDot, label: scrollStatusLabel,
+                        "Waiting for Accessibility permission. If Tide already looks enabled in System Settings, switch it off and on again — macOS keeps grants tied to a specific build, so an older entry stays listed but no longer counts.",
+                        .systemOrange)
         }
     }
 
@@ -1195,20 +1359,140 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 /// handling is a bare mouseDown override rather than NSButton/NSCell
 /// machinery, since all this needs is "run a closure on click", not any
 /// of NSButton's state/highlighting/key-equivalent behavior.
+/// Holds the three traffic lights and lights their symbols together.
+///
+/// macOS shows the symbols on all three the moment the pointer reaches the
+/// cluster, not just on the one under it, so the hover state belongs to the
+/// group rather than to each button.
+private final class TrafficLightGroup: NSView {
+
+    private let buttons: [TrafficLightButton]
+    private var hoverTrackingArea: NSTrackingArea?
+
+    init(buttons: [TrafficLightButton]) {
+        self.buttons = buttons
+        super.init(frame: .zero)
+        buttons.forEach(addSubview)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea {
+            removeTrackingArea(hoverTrackingArea)
+        }
+        // .activeAlways because the Settings window is often not the key
+        // window while the pointer is over it.
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        setHovered(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        setHovered(false)
+    }
+
+    private func setHovered(_ hovered: Bool) {
+        for button in buttons {
+            button.isHovered = hovered
+        }
+    }
+}
+
 private final class TrafficLightButton: NSView {
-    var diameter: CGFloat = 12 {
-        didSet { layer?.cornerRadius = diameter / 2 }
-    }
     var color: NSColor = .clear {
-        didSet { layer?.backgroundColor = color.cgColor }
+        didSet { needsDisplay = true }
     }
+
+    /// False for an action this window doesn't support, which draws the
+    /// button in the grey macOS uses for exactly that and stops it
+    /// responding to clicks.
+    var isEnabled = true {
+        didSet { needsDisplay = true }
+    }
+
     var onClick: (() -> Void)?
 
+    /// Drawn rather than set as a layer background: a CGColor is resolved
+    /// once and never re-resolves, so the disabled grey would keep its
+    /// launch-time appearance after the system switches between Light and
+    /// Dark. Filling inside draw(_:) picks the right one every time.
+    private static let disabledColor = NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return NSColor(white: isDark ? 0.33 : 0.84, alpha: 1)
+    }
+
+    enum Symbol {
+        case close
+        case minimize
+        case zoom
+    }
+
+    var symbol: Symbol = .close
+
+    /// Set for the whole cluster at once by TrafficLightGroup.
+    var isHovered = false {
+        didSet { needsDisplay = true }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        (isEnabled ? color : Self.disabledColor).setFill()
+        NSBezierPath(ovalIn: bounds).fill()
+
+        // A disabled button stays a bare circle on hover — the symbol would
+        // be advertising an action the window can't perform.
+        guard isHovered, isEnabled else { return }
+        drawSymbol()
+    }
+
+    private func drawSymbol() {
+        let inset = bounds.width * Self.symbolInsetRatio
+        let box = bounds.insetBy(dx: inset, dy: inset)
+
+        let path = NSBezierPath()
+        path.lineWidth = max(1, bounds.width * Self.symbolLineWidthRatio)
+        path.lineCapStyle = .round
+
+        switch symbol {
+        case .close:
+            path.move(to: NSPoint(x: box.minX, y: box.minY))
+            path.line(to: NSPoint(x: box.maxX, y: box.maxY))
+            path.move(to: NSPoint(x: box.minX, y: box.maxY))
+            path.line(to: NSPoint(x: box.maxX, y: box.minY))
+        case .minimize:
+            path.move(to: NSPoint(x: box.minX, y: box.midY))
+            path.line(to: NSPoint(x: box.maxX, y: box.midY))
+        case .zoom:
+            path.move(to: NSPoint(x: box.minX, y: box.midY))
+            path.line(to: NSPoint(x: box.maxX, y: box.midY))
+            path.move(to: NSPoint(x: box.midX, y: box.minY))
+            path.line(to: NSPoint(x: box.midX, y: box.maxY))
+        }
+
+        NSColor.black.withAlphaComponent(0.55).setStroke()
+        path.stroke()
+    }
+
+    /// Both as a fraction of the button's diameter, so the glyphs keep
+    /// their proportions if trafficLightDiameter is ever changed.
+    private static let symbolInsetRatio: CGFloat = 0.29
+    private static let symbolLineWidthRatio: CGFloat = 0.105
+
+    // Declaring init(coder:) suppresses the inherited initialisers, so the
+    // designated one has to be spelled out for TrafficLightButton() to work.
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.cornerRadius = diameter / 2
-        layer?.backgroundColor = color.cgColor
     }
 
     required init?(coder: NSCoder) {
@@ -1216,6 +1500,7 @@ private final class TrafficLightButton: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
         onClick?()
     }
 }
@@ -1237,28 +1522,49 @@ private final class DropShadowView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         NSGraphicsContext.saveGraphicsState()
+
+        let inset = contentInset + shapeInset
+        let shape = NSBezierPath(
+            roundedRect: bounds.insetBy(dx: inset, dy: inset),
+            xRadius: cornerRadius, yRadius: cornerRadius
+        )
+
+        // Clip the shape's own interior away, leaving only the shadow it
+        // casts outside itself. A shadow needs something opaque to fall
+        // from, but that black fill stays on screen too — harmless under
+        // fully opaque content, and a solid black slab showing straight
+        // through anything translucent laid on top.
+        let hole = NSBezierPath(rect: bounds)
+        hole.append(shape)
+        hole.windingRule = .evenOdd
+        hole.addClip()
+
         let shadow = NSShadow()
         shadow.shadowColor = NSColor.black.withAlphaComponent(shadowOpacity)
         shadow.shadowBlurRadius = shadowBlurRadius
         shadow.shadowOffset = shadowOffset
         shadow.set()
         NSColor.black.setFill()
-        let inset = contentInset + shapeInset
-        let shapeRect = bounds.insetBy(dx: inset, dy: inset)
-        NSBezierPath(roundedRect: shapeRect, xRadius: cornerRadius, yRadius: cornerRadius).fill()
+        shape.fill()
+
         NSGraphicsContext.restoreGraphicsState()
     }
 }
 
-/// A sidebar row cell with its own selection "pill" background, drawn at a
-/// fixed 12pt corner radius — the table's native selectionHighlightStyle
-/// is off (see buildSidebar), so this is the only thing drawing it.
+/// A sidebar row cell with its own selection "pill" background — the
+/// table's native selectionHighlightStyle is off (see buildSidebar), so
+/// this is the only thing drawing it.
+///
+/// Rounded less than the group cards, which is the relationship System
+/// Settings draws: its pills straighten out 10 retina pixels down, against
+/// 16 for a card. See smallCardCornerRadius for why the radius here isn't
+/// simply Apple's own number.
 private final class SidebarCellView: NSTableCellView {
     let pillBackground: NSBox = {
         let box = NSBox()
         box.boxType = .custom
         box.borderWidth = 0
-        box.cornerRadius = 12
+        box.cornerRadius = 7
         box.fillColor = .clear
         return box
     }()
