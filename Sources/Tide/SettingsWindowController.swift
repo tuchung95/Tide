@@ -2,7 +2,7 @@ import AppKit
 
 /// The "Settings…" window, laid out to match macOS System Settings: a real
 /// NSTableView sidebar in `.sourceList` style with rounded icon badges, and
-/// content panes built from rounded "card" groups (NSBox) with NSSwitch
+/// content panes built from squircle "card" groups (SquircleBox) with NSSwitch
 /// toggles and hairline dividers between rows — the same visual language
 /// System Settings itself uses, rather than a generic checkbox form.
 /// Shortcut persistence/registration is still owned by the app delegate via
@@ -293,10 +293,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     //
     // Matched to System Settings by measurement rather than by copying its
     // number: its cards straighten out 16 retina pixels below their top
-    // edge. The number can't be copied because NSBox draws a circular
-    // corner while Apple draws a squircle, so the same radius produces a
-    // visibly tighter curve here — 8 measured 12px, and this is what lands
-    // on 16.
+    // edge, and 11 was what landed on that. The value dates from when these
+    // cards were circular-cornered NSBoxes, which needed a bigger number
+    // than Apple's to look the same; they are true squircles now
+    // (SquircleBox), so it is worth re-measuring rather than trusted.
     private static let smallCardCornerRadius: CGFloat = 11
     // Same as cardMargin: the sidebar card now runs all the way up to the
     // window's own top edge, sitting behind/under the traffic-light
@@ -318,15 +318,16 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // separate boxed/rounded fill of its own, this same color shows
         // straight through around the small group cards. Only the sidebar
         // remains a distinct floating card, in glass.
-        let root = NSBox()
-        root.boxType = .custom
-        root.borderWidth = 0
-        // A nonzero cornerRadius here clips root's own subviews to that
-        // rounded shape near its corners (confirmed with isolated tests) —
-        // content that overlaps the corner's clipped-away triangular
-        // sliver disappears. The traffic-light replacements below and the
-        // sidebar card shadow both stay clear of that sliver by keeping
-        // enough distance from the exact corner point along both axes.
+        // SquircleBox rather than NSBox: NSBox's cornerRadius is a
+        // circular arc, and macOS rounds a window's backdrop with a
+        // continuous (squircle) curve. It also paints nothing outside that
+        // curve, so the window's four corner pixels stay at alpha 0 and
+        // show the desktop — see the window's isOpaque/backgroundColor
+        // above. Unlike NSBox it does not clip its own subviews to the
+        // rounded shape either, so the traffic-light replacements and the
+        // sidebar card shadow no longer have a corner sliver to stay clear
+        // of.
+        let root = SquircleBox()
         root.cornerRadius = Self.windowCornerRadius
         root.fillColor = Self.pageFillColor
 
@@ -416,11 +417,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         // Plain solid fill instead of the frosted-glass NSVisualEffectView
         // this used to be — same F7F7F7 as the small group cards, for a
-        // consistent flat palette. NSBox rather than a layer-backed NSView:
-        // its cornerRadius/borderWidth/borderColor/fillColor all resolve
-        // correctly against the current appearance on their own.
-        let background = NSBox()
-        background.boxType = .custom
+        // consistent flat palette. SquircleBox rather than NSBox: continuous
+        // corners like every other card, drawn with nothing outside the
+        // curve so the page shows through the four corners at alpha 0. Its
+        // fill/border stay NSColors resolved at draw time, the way NSBox's
+        // did — a layer-backed NSView would freeze them at one appearance.
+        let background = SquircleBox()
         background.cornerRadius = Self.cardCornerRadius
         background.borderWidth = 1
         background.borderColor = Self.cardBorderColor
@@ -551,6 +553,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // once scaled down to a 24pt badge.
         imageView.wantsLayer = true
         imageView.layer?.cornerRadius = Self.sidebarIconCornerRadius
+        // Continuous corners, matching the squircle shadow drawn behind it
+        // below (and the shape every macOS app icon already has) — a
+        // circular clip here would show the shadow past the badge's corners.
+        imageView.layer?.cornerCurve = .continuous
         imageView.layer?.masksToBounds = true
 
         // A separate view behind the badge draws its drop shadow: CALayer's
@@ -658,11 +664,14 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// White over white is still white, which is what made an earlier
     /// attempt at this vanish in Light Mode.
     ///
-    /// Measured off System Settings: Light page #F6F6F6 with cards #F9F9F9;
-    /// Dark cards about 20% lighter than the page they sit on.
+    /// Measured off System Settings, the Light card came out #F9F9F9 on a
+    /// #F6F6F6 page — three levels apart, which reads as the card sinking
+    /// into the page rather than sitting on it, so this deliberately goes
+    /// past the measurement: solid white in Light, and a bigger lift than
+    /// the measured ~20% in Dark.
     private static let groupCardFillColor = NSColor(name: nil) { appearance in
         let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        return NSColor.white.withAlphaComponent(isDark ? 0.03 : 0.33)
+        return NSColor.white.withAlphaComponent(isDark ? 0.08 : 1.0)
     }
 
     /// Fill for the sidebar card, which is deliberately *not* the same as
@@ -714,10 +723,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// A rounded, filled group box with hairline dividers between its rows
     /// — System Settings' basic building block for every pane.
     private func makeCard(rows: [NSView]) -> NSView {
-        let box = NSBox()
-        box.boxType = .custom
+        let box = SquircleBox()
         box.cornerRadius = Self.smallCardCornerRadius
-        box.borderWidth = 0
         // Now that the page itself is pure white, the card needs its own
         // gray fill to read as a distinct card at all — controlBackgroundColor
         // (also white) was flush with the page and invisible.
@@ -1524,9 +1531,12 @@ private final class DropShadowView: NSView {
         NSGraphicsContext.saveGraphicsState()
 
         let inset = contentInset + shapeInset
-        let shape = NSBezierPath(
-            roundedRect: bounds.insetBy(dx: inset, dy: inset),
-            xRadius: cornerRadius, yRadius: cornerRadius
+        // Same continuous-corner shape the cards themselves are drawn with
+        // (SquircleBox) — a circular rounded rect here would spill past the
+        // card's corners along the diagonal and fall short along the edges.
+        let shape = NSBezierPath.squircle(
+            in: bounds.insetBy(dx: inset, dy: inset),
+            cornerRadius: cornerRadius
         )
 
         // Clip the shape's own interior away, leaving only the shadow it
