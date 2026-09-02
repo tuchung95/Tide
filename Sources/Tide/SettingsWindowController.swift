@@ -1570,10 +1570,8 @@ private final class DropShadowView: NSView {
 /// 16 for a card. See smallCardCornerRadius for why the radius here isn't
 /// simply Apple's own number.
 private final class SidebarCellView: NSTableCellView {
-    let pillBackground: NSBox = {
-        let box = NSBox()
-        box.boxType = .custom
-        box.borderWidth = 0
+    let pillBackground: SquircleBox = {
+        let box = SquircleBox()
         box.cornerRadius = 7
         box.fillColor = .clear
         return box

@@ -92,6 +92,12 @@ final class VolumeHUD {
         background.state = .active
         background.wantsLayer = true
         background.layer?.cornerRadius = Self.cornerRadius
+        // Continuous corners, like the Settings window's cards and page
+        // (SquircleBox) and like macOS's own HUD — a circular arc reads as
+        // a visibly tighter curve at the same radius. masksToBounds clips
+        // the material to that shape, and the panel is non-opaque with a
+        // clear backgroundColor above, so the four corners stay at alpha 0.
+        background.layer?.cornerCurve = .continuous
         background.layer?.masksToBounds = true
         background.autoresizingMask = [.width, .height]
 

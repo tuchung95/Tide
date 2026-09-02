@@ -74,7 +74,10 @@ final class ShortcutRecorderControl: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 5, yRadius: 5)
+        // Squircle rather than a circular rounded rect, matching the cards
+        // and the sidebar pill this field sits among (see SquircleBox);
+        // nothing is painted outside the path, so its corners stay clear.
+        let path = NSBezierPath.squircle(in: bounds.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 5)
 
         let fillColor: NSColor = isRecording
             ? NSColor.controlAccentColor.withAlphaComponent(0.15)
