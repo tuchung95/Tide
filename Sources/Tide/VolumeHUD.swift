@@ -90,15 +90,16 @@ final class VolumeHUD {
         // Without .active the material greys out whenever Tide isn't the
         // frontmost app — which is always, for a menu bar utility.
         background.state = .active
-        background.wantsLayer = true
-        background.layer?.cornerRadius = Self.cornerRadius
-        // Continuous corners, like the Settings window's cards and page
-        // (SquircleBox) and like macOS's own HUD — a circular arc reads as
-        // a visibly tighter curve at the same radius. masksToBounds clips
-        // the material to that shape, and the panel is non-opaque with a
-        // clear backgroundColor above, so the four corners stay at alpha 0.
-        background.layer?.cornerCurve = .continuous
-        background.layer?.masksToBounds = true
+        // Shaped with maskImage rather than a layer cornerRadius +
+        // masksToBounds: a .behindWindow material is composited by the
+        // window server, outside this process and past any layer mask set
+        // here, so the blur — and the window shadow traced from it — kept
+        // the panel's full square and leaked out past the curve at all
+        // four corners. maskImage is the hook the server does honour, and
+        // it takes the same NSBezierPath.squircle the Settings page and
+        // cards use (SquircleBox), so the HUD's corners match theirs
+        // exactly instead of the tighter circular arc a layer draws.
+        background.maskImage = Self.cornerMask(radius: Self.cornerRadius)
         background.autoresizingMask = [.width, .height]
 
         titleLabel = NSTextField(labelWithString: "")
@@ -122,6 +123,26 @@ final class VolumeHUD {
 
         self.panel = panel
         return panel
+    }
+
+    /// The squircle silhouette the material is clipped to, as a nine-part
+    /// resizable image: only the four corner tiles carry the curve, and
+    /// the cap insets let AppKit stretch the flat middle out to whatever
+    /// size the panel is without smearing them.
+    private static func cornerMask(radius: CGFloat) -> NSImage {
+        // A squircle corner runs 1.52866483 × radius along each edge
+        // before it meets the straight part, so a corner tile has to be at
+        // least that big to hold the whole curve.
+        let corner = ceil(radius * 1.52866483)
+        let size = NSSize(width: corner * 2 + 1, height: corner * 2 + 1)
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath.squircle(in: rect, cornerRadius: radius).fill()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(top: corner, left: corner, bottom: corner, right: corner)
+        image.resizingMode = .stretch
+        return image
     }
 
     private static func icon(for level: Float) -> NSImage? {
