@@ -4,8 +4,10 @@ import AppKit
 ///
 /// Tide swallows those keys (see VolumeKeyTap), so macOS never puts up its
 /// own volume HUD — without this, a keypress would change the monitor's
-/// volume with nothing on screen to say it worked. This is the stand-in:
-/// same idea as the system HUD, named for the monitor being controlled.
+/// volume with nothing on screen to say it worked. This is the stand-in,
+/// laid out to match the panel it replaces: the device name over a slider
+/// flanked by a quiet and a loud speaker icon, with a row of tick dots
+/// under the track for the steps a volume key moves in.
 ///
 /// A non-activating, click-through panel rather than an NSPopover: a
 /// popover would need somewhere to anchor and would pull focus to Tide,
@@ -15,12 +17,13 @@ final class VolumeHUD {
 
     private var panel: NSPanel?
     private var titleLabel: NSTextField!
-    private var iconView: NSImageView!
     private var levelView: LevelBar!
     private var hideWorkItem: DispatchWorkItem?
 
-    private static let panelSize = NSSize(width: 232, height: 76)
-    private static let cornerRadius: CGFloat = 20
+    // Proportioned off macOS's own volume HUD — wide and shallow, where
+    // this used to be a small squarish card.
+    private static let panelSize = NSSize(width: 310, height: 72)
+    private static let cornerRadius: CGFloat = 18
     private static let visibleDuration: TimeInterval = 1.2
 
     /// Shows (or refreshes) the HUD for `title` at `level` 0…1.
@@ -33,9 +36,16 @@ final class VolumeHUD {
 
         titleLabel.stringValue = title
         levelView.level = CGFloat(min(max(level, 0), 1))
-        iconView.image = Self.icon(for: level)
 
-        panel.setFrameOrigin(Self.origin(anchoredTo: statusButton))
+        // Placed only when the HUD isn't already on screen. Tide's menu
+        // bar item is a live speed readout whose width changes with the
+        // number in it, so re-anchoring on every key press walked the
+        // panel sideways while the volume was still being adjusted — it
+        // stays put now for as long as one showing lasts, fade-out
+        // included, and re-anchors only on its next appearance.
+        if !panel.isVisible {
+            panel.setFrameOrigin(Self.origin(anchoredTo: statusButton))
+        }
         panel.alphaValue = 1
         panel.orderFrontRegardless()
 
@@ -100,25 +110,54 @@ final class VolumeHUD {
         // cards use (SquircleBox), so the HUD's corners match theirs
         // exactly instead of the tighter circular arc a layer draws.
         background.maskImage = Self.cornerMask(radius: Self.cornerRadius)
-        background.autoresizingMask = [.width, .height]
 
         titleLabel = NSTextField(labelWithString: "")
-        titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         titleLabel.textColor = .white
         titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.frame = NSRect(x: 16, y: 44, width: Self.panelSize.width - 32, height: 16)
+        titleLabel.frame = NSRect(x: 12, y: 40, width: Self.panelSize.width - 24, height: 16)
         titleLabel.autoresizingMask = [.width]
 
-        iconView = NSImageView(frame: NSRect(x: 16, y: 18, width: 18, height: 16))
-        iconView.contentTintColor = .white
-        iconView.imageScaling = .scaleProportionallyDown
+        // Two fixed icons marking the ends of the range, as macOS's HUD
+        // has, rather than the single icon that used to change with the
+        // level: at a glance the panel then reads as a slider between
+        // quiet and loud instead of as a status symbol.
+        let quietIcon = Self.iconView(
+            named: "speaker.fill",
+            pointSize: 11,
+            frame: NSRect(x: 11, y: 17.5, width: 13, height: 13)
+        )
+        let loudIcon = Self.iconView(
+            named: "speaker.wave.3.fill",
+            pointSize: 12,
+            frame: NSRect(x: Self.panelSize.width - 33, y: 17.5, width: 19, height: 13)
+        )
+        loudIcon.autoresizingMask = [.minXMargin]
 
-        levelView = LevelBar(frame: NSRect(x: 42, y: 22, width: Self.panelSize.width - 58, height: 8))
+        levelView = LevelBar(frame: NSRect(
+            x: 32,
+            y: 12,
+            width: Self.panelSize.width - 76,
+            height: LevelBar.height
+        ))
         levelView.autoresizingMask = [.width]
 
+        // The pale rim macOS's HUD carries along its edge. Drawn as a
+        // SquircleBox so the stroke follows exactly the same curve the
+        // mask above clips to, and left unfilled so only the outline
+        // lands on top of the material.
+        let rim = SquircleBox(frame: NSRect(origin: .zero, size: Self.panelSize))
+        rim.cornerRadius = Self.cornerRadius
+        rim.borderColor = NSColor.white.withAlphaComponent(0.18)
+        rim.borderWidth = 1
+        rim.autoresizingMask = [.width, .height]
+
         background.addSubview(titleLabel)
-        background.addSubview(iconView)
+        background.addSubview(quietIcon)
+        background.addSubview(loudIcon)
         background.addSubview(levelView)
+        background.addSubview(rim)
+        background.autoresizingMask = [.width, .height]
         panel.contentView = background
 
         self.panel = panel
@@ -145,18 +184,16 @@ final class VolumeHUD {
         return image
     }
 
-    private static func icon(for level: Float) -> NSImage? {
-        let name: String
-        switch level {
-        case ..<0.001: name = "speaker.slash.fill"
-        case ..<0.34: name = "speaker.wave.1.fill"
-        case ..<0.67: name = "speaker.wave.2.fill"
-        default: name = "speaker.wave.3.fill"
-        }
+    private static func iconView(named name: String, pointSize: CGFloat, frame: NSRect) -> NSImageView {
         let image = NSImage(systemSymbolName: name, accessibilityDescription: "Volume")?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .medium))
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium))
         image?.isTemplate = true
-        return image
+
+        let view = NSImageView(frame: frame)
+        view.image = image
+        view.contentTintColor = .white
+        view.imageScaling = .scaleProportionallyDown
+        return view
     }
 
     /// Centred under Tide's own menu bar item, so the HUD reads as coming
@@ -168,7 +205,7 @@ final class VolumeHUD {
         if let window = statusButton?.window {
             let inScreen = window.convertToScreen(statusButton!.bounds)
             return NSPoint(
-                x: inScreen.midX - panelSize.width / 2,
+                x: clampedToScreen(inScreen.midX - panelSize.width / 2, near: window.screen),
                 y: inScreen.minY - panelSize.height - gapBelowMenuBar
             )
         }
@@ -180,27 +217,64 @@ final class VolumeHUD {
         )
     }
 
-    /// The filled track. Drawn by hand rather than with NSLevelIndicator,
-    /// which has no style that looks right on a dark HUD.
+    /// Keeps the panel on screen when the status item sits close enough
+    /// to an edge that a panel centred under it would hang off — easy to
+    /// hit now the HUD is 310pt wide against a menu bar item a fraction
+    /// of that.
+    private static func clampedToScreen(_ x: CGFloat, near screen: NSScreen?) -> CGFloat {
+        guard let visible = (screen ?? NSScreen.main)?.visibleFrame else { return x }
+        let margin: CGFloat = 8
+        return min(max(x, visible.minX + margin), visible.maxX - margin - panelSize.width)
+    }
+
+    /// The filled track, with macOS's row of tick dots under it. Drawn by
+    /// hand rather than with NSLevelIndicator, which has no style that
+    /// looks right on a dark HUD.
     private final class LevelBar: NSView {
+
+        /// Track along the top edge, dots along the bottom one.
+        static let height: CGFloat = 16
+        private static let trackHeight: CGFloat = 8
+        private static let tickDiameter: CGFloat = 2
+        /// One dot per step a volume key moves the volume in, the way the
+        /// system HUD prints them.
+        private static let tickCount = 16
 
         var level: CGFloat = 0 {
             didSet { needsDisplay = true }
         }
 
         override func draw(_ dirtyRect: NSRect) {
-            let radius = bounds.height / 2
+            let track = NSRect(
+                x: 0,
+                y: bounds.height - Self.trackHeight,
+                width: bounds.width,
+                height: Self.trackHeight
+            )
+            let radius = track.height / 2
 
             NSColor.white.withAlphaComponent(0.25).setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
+            NSBezierPath(roundedRect: track, xRadius: radius, yRadius: radius).fill()
 
-            guard level > 0 else { return }
-            // Never narrower than the track is tall, so a very low level
-            // still draws as a round dot instead of a sliver.
-            let width = max(bounds.width * level, bounds.height)
-            let filled = NSRect(x: 0, y: 0, width: width, height: bounds.height)
-            NSColor.white.setFill()
-            NSBezierPath(roundedRect: filled, xRadius: radius, yRadius: radius).fill()
+            if level > 0 {
+                // Never narrower than the track is tall, so a very low
+                // level still draws as a round dot instead of a sliver.
+                let width = max(track.width * level, track.height)
+                let filled = NSRect(x: track.minX, y: track.minY, width: width, height: track.height)
+                NSColor.white.setFill()
+                NSBezierPath(roundedRect: filled, xRadius: radius, yRadius: radius).fill()
+            }
+
+            // Spread end to end under the track, so the first and last dot
+            // line up with the two ends of the range rather than floating
+            // inside them.
+            NSColor.white.withAlphaComponent(0.35).setFill()
+            let diameter = Self.tickDiameter
+            let step = (bounds.width - diameter) / CGFloat(Self.tickCount - 1)
+            for index in 0..<Self.tickCount {
+                let dot = NSRect(x: CGFloat(index) * step, y: 0, width: diameter, height: diameter)
+                NSBezierPath(ovalIn: dot).fill()
+            }
         }
     }
 }
