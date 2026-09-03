@@ -62,7 +62,23 @@ final class DisplayController {
 
     private var isRefreshing = false
     private var needsAnotherRefresh = false
+    /// How many of the delayed second attempts below this run of discovery
+    /// has already spent — see applyProbeResults. Reset when something
+    /// outside the app asks for discovery again (launch, the screen
+    /// arrangement changing, waking from sleep), never by a retry itself,
+    /// so a monitor that stays silent can't put the app in a retry loop.
+    private var retriesSpent = 0
+    /// Spread out rather than bunched together: a monitor that was merely
+    /// busy answers within seconds, while one still coming back from sleep
+    /// can take most of a minute, and three tries an equal 5s apart would
+    /// all land inside the window where it says nothing.
+    private static let retryDelays: [TimeInterval] = [5, 15, 30]
+    /// How long to let a burst of screen changes settle before running
+    /// discovery, and the same for a wake.
+    private static let settleDelay: TimeInterval = 1.5
+    private static let wakeSettleDelay: TimeInterval = 2
     private var screenChangeObserver: NSObjectProtocol?
+    private var wakeObserver: NSObjectProtocol?
     private var rediscoverWorkItem: DispatchWorkItem?
 
     // MARK: - Lifecycle
@@ -75,6 +91,16 @@ final class DisplayController {
         ) { [weak self] _ in
             self?.screenParametersChanged()
         }
+        // Waking is when a monitor is least likely to answer: the panel is
+        // still coming back and its DDC channel with it, so whatever was
+        // discovered before the sleep is worth establishing again.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.wokeFromSleep()
+        }
         refresh()
     }
 
@@ -86,14 +112,28 @@ final class DisplayController {
     }
 
     private func screenParametersChanged() {
-        // Plugging a monitor in fires this several times in a row while
-        // the display arrangement settles, and DDC discovery on a monitor
-        // that's still negotiating just times out. Waiting for the dust to
-        // settle is both faster and more reliable than racing it.
+        // A monitor arriving or leaving is a fresh situation, so the
+        // delayed retries are all available again.
+        retriesSpent = 0
+        scheduleRefresh(after: Self.settleDelay)
+    }
+
+    private func wokeFromSleep() {
+        retriesSpent = 0
+        scheduleRefresh(after: Self.wakeSettleDelay)
+    }
+
+    /// Plugging a monitor in fires the screen notification several times
+    /// in a row while the arrangement settles, and a wake fires both
+    /// notifications at once — while DDC discovery on a monitor that's
+    /// still negotiating just times out. Letting the dust settle, and
+    /// collapsing the burst into a single run, is both faster and more
+    /// reliable than racing it.
+    private func scheduleRefresh(after delay: TimeInterval) {
         rediscoverWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in self?.refresh() }
         rediscoverWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
     // MARK: - Discovery
@@ -213,6 +253,91 @@ final class DisplayController {
                 brightness: brightness,
                 volume: result.volume ?? 0
             )
+        }
+
+        // DDC reads fail transiently, and a monitor that was still busy
+        // when the app started answers nothing at all — yet this probe
+        // runs once per round of discovery, so a single miss sticks for
+        // the rest of the session: no volume slider in the menu (or, if
+        // the miss was the brightness query too, software dimming on a
+        // monitor that does support DDC) until the app is relaunched.
+        // Neither is worth believing on one silence, so each round gets
+        // a short ladder of delayed second attempts.
+        let lostDDC = results.contains { result in
+            if case .gamma = result.transport { return !result.info.isBuiltIn }
+            return false
+        }
+        let missedVolume = results.contains { result in
+            if case .ddc(_, _, let maxVolume) = result.transport { return maxVolume == nil }
+            return false
+        }
+        if lostDDC || missedVolume {
+            scheduleProbeRetry(lostDDC: lostDDC)
+        }
+
+        onDisplaysChanged?()
+    }
+
+    /// Books the next rung of the retry ladder, if this run of discovery
+    /// has one left. A miss on the whole conversation needs discovery run
+    /// again, while a monitor that answered about brightness only needs
+    /// the one query that came back empty.
+    private func scheduleProbeRetry(lostDDC: Bool) {
+        guard retriesSpent < Self.retryDelays.count else { return }
+        let delay = Self.retryDelays[retriesSpent]
+        retriesSpent += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            if lostDDC { self?.refresh() } else { self?.reprobeVolume() }
+        }
+    }
+
+    /// The second volume read scheduled above. Deliberately narrower than
+    /// another refresh: no IORegistry walk, no re-read of brightness and
+    /// no re-applying of saved gamma values — just the one query that came
+    /// back empty.
+    private func reprobeVolume() {
+        let pending: [(id: CGDirectDisplayID, service: DDCService)] = displays.compactMap { display in
+            guard case .ddc(let service, _, nil)? = transport(for: display.info.id) else { return nil }
+            return (id: display.info.id, service: service)
+        }
+        guard !pending.isEmpty else { return }
+
+        ddcQueue.async { [weak self] in
+            let answers = pending.compactMap { entry -> (id: CGDirectDisplayID, current: UInt16, max: UInt16)? in
+                guard let value = entry.service.read(.volume) else { return nil }
+                return (id: entry.id, current: value.current, max: value.max)
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if !answers.isEmpty {
+                    self.applyVolumeReprobe(answers)
+                }
+                // Still silent — take the next rung rather than stopping
+                // at one attempt, which is the whole point of the ladder.
+                if answers.count < pending.count {
+                    self.scheduleProbeRetry(lostDDC: false)
+                }
+            }
+        }
+    }
+
+    private func applyVolumeReprobe(_ answers: [(id: CGDirectDisplayID, current: UInt16, max: UInt16)]) {
+        for answer in answers {
+            lock.lock()
+            if case .ddc(let service, let maxBrightness, _) = transports[answer.id] {
+                transports[answer.id] = .ddc(service, maxBrightness: maxBrightness, maxVolume: answer.max)
+            }
+            lock.unlock()
+
+            guard let index = displays.firstIndex(where: { $0.info.id == answer.id }) else { continue }
+            let display = displays[index]
+            displays[index] = ManagedDisplay(
+                info: display.info,
+                supportsVolume: true,
+                brightness: display.brightness,
+                volume: Float(answer.current) / Float(answer.max)
+            )
+            NSLog("Tide: \"\(display.info.name)\" answered the second volume probe — \(answer.current)/\(answer.max)")
         }
 
         onDisplaysChanged?()
