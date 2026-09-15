@@ -104,7 +104,7 @@ Yêu cầu macOS 13 (Ventura) trở lên.
 | **Screen Recording** | Chụp ảnh màn hình | Lần chụp đầu tiên |
 | **Accessibility** | Đảo hướng cuộn theo thiết bị; bắt phím âm lượng cho loa màn hình | Khi bật Reverse Scroll Direction hoặc Volume Keys Control Monitor Speakers |
 
-Nếu System Settings đã hiện Tide được bật mà app vẫn báo thiếu quyền: tắt rồi bật lại mục Tide trong danh sách. macOS gắn quyền theo từng bản build, nên một entry cũ vẫn nằm trong danh sách nhưng không còn hiệu lực.
+Nếu System Settings đã hiện Tide được bật mà app vẫn báo thiếu quyền: tắt rồi bật lại mục Tide trong danh sách. macOS gắn quyền theo chữ ký của bản build, nên một entry cũ vẫn nằm trong danh sách nhưng không còn hiệu lực — chi tiết và cách chẩn đoán ở mục [Chữ ký và quyền hệ thống](#chữ-ký-và-quyền-hệ-thống).
 
 ## Build từ source
 
@@ -118,6 +118,48 @@ Cần Xcode Command Line Tools (có `swiftc`, `codesign`), **không cần** Xcod
 SKIP_RELEASE=1 ./Scripts/build_app.sh
 ```
 
-Script compile thẳng bằng `swiftc` (SwiftPM cần SDK path chỉ có trong Xcode.app đầy đủ), tự tăng patch version trong `Resources/VERSION`, đóng gói `Tide.app`, rồi ký bằng certificate `Tide Local Dev` nếu máy có sẵn — chữ ký ổn định qua các lần rebuild giúp macOS không đòi cấp lại quyền — không có thì rơi về ký ad-hoc.
+Script compile thẳng bằng `swiftc` (SwiftPM cần SDK path chỉ có trong Xcode.app đầy đủ), tự tăng patch version trong `Resources/VERSION`, đóng gói `Tide.app`, rồi ký bằng certificate `Tide Local Dev` dùng chung (xem bên dưới). Build local (`SKIP_RELEASE=1`) không có certificate thì rơi về ký ad-hoc; build release thì **bị chặn** — không bao giờ publish một bản ký sai chữ ký.
 
 Trang Releases chỉ giữ đúng bản mới nhất: publish xong, script tự xoá mọi release cũ hơn kèm tag của chúng.
+
+## Chữ ký và quyền hệ thống
+
+macOS lưu quyền Screen Recording / Accessibility theo *designated requirement* của app: `identifier "com.tide.menubar" and certificate leaf = H"<SHA-1 của certificate>"`. Hệ quả:
+
+- Ký ad-hoc (`--sign -`): requirement gắn vào hash của binary → mỗi lần rebuild là một app "mới", quyền mất.
+- Ký bằng certificate tự tạo: requirement gắn vào certificate → rebuild bao nhiêu lần vẫn giữ quyền, **miễn là cùng một certificate**.
+- Hai máy mỗi máy tự tạo một `Tide Local Dev` riêng → tên giống nhưng hash khác. Release build từ máy A auto-update sang máy B sẽ làm B mất toàn bộ quyền, dù System Settings vẫn hiện Tide đang được bật.
+
+Vì vậy **toàn bộ máy build phải dùng chung một certificate**, hash được pin ở `SIGNING_LEAF` trong `Scripts/build_app.sh`. Script chọn identity theo hash (không theo tên) và kiểm tra lại requirement sau khi ký. Phía nhận, `UpdateInstaller` từ chối cài bản cập nhật không cùng chữ ký với bản đang chạy, thay vì âm thầm phá quyền.
+
+### Thêm một máy build mới
+
+Trên máy đã có certificate (máy gốc), export cả private key ra `.p12`:
+
+```bash
+security export -k login.keychain -t identities -f pkcs12 -o ~/Desktop/TideLocalDev.p12
+# nhập mật khẩu bảo vệ file khi được hỏi
+```
+
+Chuyển file sang máy mới (AirDrop, không commit vào repo), rồi import và cho `codesign` được dùng key:
+
+```bash
+security import ~/Desktop/TideLocalDev.p12 -k ~/Library/Keychains/login.keychain-db -T /usr/bin/codesign
+security find-identity -v -p codesigning   # phải thấy đúng hash 0C3381B9A5B46311AA9E6D3CC99567B4E4BB8831
+```
+
+Nếu máy mới trước đó đã tự tạo một `Tide Local Dev` khác, xoá nó đi trong Keychain Access để tránh lẫn; các quyền đã cấp cho bản ký bằng cert cũ trên máy đó sẽ phải cấp lại **một lần** (`tccutil reset ScreenCapture com.tide.menubar; tccutil reset Accessibility com.tide.menubar`, rồi bật lại từ prompt của app).
+
+### Nếu quyền đã cấp mà app vẫn hỏi lại
+
+So requirement của bản đang cài với entry TCC:
+
+```bash
+codesign -d -r- /Applications/Tide.app
+sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+  "select service, auth_value, hex(csreq) from access where client='com.tide.menubar';"
+```
+
+20 byte cuối của `csreq` là hash certificate mà TCC đang mong đợi. Khác với `certificate leaf` của app → app đang cài được ký bằng cert khác: build lại bằng cert chung (`SKIP_RELEASE=1 ./Scripts/build_app.sh`) hoặc `tccutil reset` rồi cấp lại.
+
+Gatekeeper vẫn chặn lần mở đầu vì certificate tự tạo không được Apple notarize (chuột phải → Open). Muốn bỏ bước này cần Apple Developer ID + notarization (tài khoản Apple Developer trả phí); cách pin certificate ở trên vẫn đúng y như vậy với Developer ID, chỉ đổi hash.

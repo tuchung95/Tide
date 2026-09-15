@@ -677,7 +677,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         guard case .failure(let error) = result else { return } // success quits the app itself
                         let errorAlert = NSAlert()
                         errorAlert.messageText = "Update Failed"
-                        errorAlert.informativeText = "\(error)"
+                        errorAlert.informativeText = error.localizedDescription
                         errorAlert.runModal()
                     }
                 }

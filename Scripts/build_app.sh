@@ -22,6 +22,32 @@ SOURCES=(Sources/Tide/*.swift)
 REPO="tuchung95/Tide"
 SKIP_RELEASE="${SKIP_RELEASE:-0}"
 
+# All builds — on every Mac that ever publishes a release — must be signed
+# by the ONE "Tide Local Dev" certificate whose SHA-1 fingerprint is pinned
+# here. macOS's privacy grants (Screen Recording, Accessibility) are stored
+# against the app's designated requirement, `identifier "com.tide.menubar"
+# and certificate leaf = H"<this hash>"`, so a release signed by a
+# different certificate (even one with the same name, self-created on
+# another Mac) lands on users' machines as a brand new, unauthorized app
+# and every grant has to be redone. Plain ad-hoc signing (`--sign -`) is
+# worse still: its identity is re-derived from the binary's hash on every
+# rebuild. See README "Chữ ký và quyền hệ thống" for how to import the
+# shared certificate on a new build machine.
+SIGNING_LEAF="0C3381B9A5B46311AA9E6D3CC99567B4E4BB8831"
+if security find-identity -v -p codesigning 2>/dev/null | grep -qi "${SIGNING_LEAF}"; then
+    SIGN_IDENTITY="${SIGNING_LEAF}"
+elif [ "${SKIP_RELEASE}" = "1" ]; then
+    echo "Shared 'Tide Local Dev' certificate (${SIGNING_LEAF}) not in keychain; falling back to ad-hoc signing."
+    echo "(Screen Recording / Accessibility permissions will need to be re-granted after each rebuild.)"
+    SIGN_IDENTITY="-"
+else
+    echo "ERROR: shared 'Tide Local Dev' certificate (${SIGNING_LEAF}) not in keychain." >&2
+    echo "A release signed by any other certificate breaks Screen Recording / Accessibility" >&2
+    echo "grants on every device that installs it. Import the shared certificate (.p12) first —" >&2
+    echo "see README 'Chữ ký và quyền hệ thống' — or build locally with SKIP_RELEASE=1." >&2
+    exit 1
+fi
+
 echo "Compiling release binary..."
 mkdir -p .build/release
 swiftc -O -whole-module-optimization \
@@ -62,21 +88,19 @@ cp "Resources/SidebarDisplayIcon.png" "${APP_BUNDLE}/Contents/Resources/SidebarD
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${NEW_VERSION}" "${APP_BUNDLE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${NEW_VERSION}" "${APP_BUNDLE}/Contents/Info.plist"
 
-# A stable local signing identity, if one has been set up (see README's
-# "Giữ quyền Screen Recording qua các lần rebuild" section), keeps macOS's
-# privacy permissions (Screen Recording) intact across rebuilds. Plain
-# ad-hoc signing (`--sign -`) re-derives its identity from the binary's
-# hash every time, so each rebuild looks like a brand new, unauthorized app
-# to TCC and the Screen Recording prompt reappears.
-SIGN_IDENTITY="Tide Local Dev"
-if ! security find-identity -v -p codesigning 2>/dev/null | grep -q "\"${SIGN_IDENTITY}\""; then
-    echo "No '${SIGN_IDENTITY}' signing identity found; falling back to ad-hoc signing."
-    echo "(Screen Recording permission will need to be re-granted after each rebuild.)"
-    SIGN_IDENTITY="-"
-fi
-
 echo "Code signing (${SIGN_IDENTITY})..."
 codesign --force --deep --sign "${SIGN_IDENTITY}" "${APP_BUNDLE}"
+
+# Belt and braces: confirm the bundle's designated requirement really does
+# carry the pinned leaf before it can be installed or published.
+if [ "${SIGN_IDENTITY}" != "-" ]; then
+    ACTUAL_DR=$(codesign -d -r- "${APP_BUNDLE}" 2>&1 | grep '^designated' || true)
+    if ! grep -qi "certificate leaf = H\"${SIGNING_LEAF}\"" <<< "${ACTUAL_DR}"; then
+        echo "ERROR: signed bundle's designated requirement doesn't carry ${SIGNING_LEAF}:" >&2
+        echo "  ${ACTUAL_DR}" >&2
+        exit 1
+    fi
+fi
 
 echo "Done: ${APP_BUNDLE}"
 
