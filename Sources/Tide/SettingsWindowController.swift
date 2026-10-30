@@ -186,6 +186,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private var keyRemapSwitch: NSSwitch!
     private var keyboardScopePopup: NSPopUpButton!
     private var keyRemapListStack: NSStackView!
+    private var keyRemapScrollView: NSScrollView!
+    /// Pulls the rows in from the list's right edge when they need to leave
+    /// room for the scroller; see reloadKeyRemapList().
+    private var keyRemapListTrailing: NSLayoutConstraint!
     private var keyRemapEmptyLabel: NSTextField!
     private var addKeyRemapButton: NSButton!
     private var keyRemapStatusDot: NSBox!
@@ -1476,6 +1480,13 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         // A short list shouldn't rubber-band inside its card.
         scrollView.verticalScrollElasticity = .none
         scrollView.documentView = document
+        keyRemapScrollView = scrollView
+        keyRemapListTrailing = keyRemapListStack.trailingAnchor.constraint(equalTo: document.trailingAnchor)
+
+        // The scroller's style follows System Settings and whether a mouse
+        // is attached, and the room the rows leave for it depends on that.
+        NotificationCenter.default.addObserver(self, selector: #selector(scrollerStyleDidChange),
+                                               name: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil)
 
         keyRemapEmptyLabel = NSTextField(labelWithString: "No keys remapped yet.")
         keyRemapEmptyLabel.textColor = .tertiaryLabelColor
@@ -1501,7 +1512,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
             keyRemapListStack.topAnchor.constraint(equalTo: document.topAnchor),
             keyRemapListStack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
-            keyRemapListStack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            keyRemapListTrailing,
             keyRemapListStack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
 
             keyRemapEmptyLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
@@ -1605,6 +1616,22 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         keyRemapEmptyLabel.isHidden = !remaps.isEmpty
         addKeyRemapButton.isEnabled = KeyRemapStore.isEnabled
+
+        // An overlay scroller floats over the list's right edge — right on
+        // each row's remove button — so once there's enough to scroll, the
+        // rows step in by its width. A legacy scroller needs nothing: it
+        // takes its width out of the clip view itself, and the rows follow.
+        let scrolls = remaps.count > Self.keyRemapVisibleRows
+        // The preferred style rather than the scroll view's own: on a style
+        // change this can run before the scroll view has caught up.
+        let needsScrollerLane = scrolls && NSScroller.preferredScrollerStyle == .overlay
+        keyRemapListTrailing.constant = needsScrollerLane
+            ? -NSScroller.scrollerWidth(for: keyRemapScrollView.verticalScroller?.controlSize ?? .regular, scrollerStyle: .overlay)
+            : 0
+    }
+
+    @objc private func scrollerStyleDidChange() {
+        refreshKeyboardPane()
     }
 
     private func makeKeyRemapRow(_ remap: KeyRemap, index: Int, takenSources: Set<UInt64>) -> NSView {
