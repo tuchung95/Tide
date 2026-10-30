@@ -76,6 +76,12 @@ enum KeyRemapStore {
         groups = stored
     }
 
+    /// Whether any key is set to lock the screen — which needs the app
+    /// delegate's hot key on the stand-in key (see RemappableKey.lockScreen).
+    static var hasLockScreenRemap: Bool {
+        groups.contains { group in group.remaps.contains { $0.to == RemappableKey.lockScreen.hidUsage } }
+    }
+
     /// Specific keyboards that have remaps saved, with their last known
     /// names — including ones that aren't connected right now.
     static var configuredKeyboards: [(id: String, name: String)] {

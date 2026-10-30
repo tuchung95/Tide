@@ -18,6 +18,9 @@ struct RemappableKey {
     struct Group {
         let title: String
         let keys: [RemappableKey]
+        /// Offered only on the right of a mapping: things a key can be
+        /// turned into but that no key physically is.
+        var isTargetOnly = false
     }
 
     /// Every key offered in the Keyboard pane's pickers, in menu order.
@@ -74,12 +77,14 @@ struct RemappableKey {
             consumerKey(0x70, "Brightness Down"),
             consumerKey(0x6F, "Brightness Up")
         ]),
-        // F13–F20 have no key on most keyboards, which is what makes them
+        Group(title: "Actions", keys: [lockScreen], isTargetOnly: true),
+        // F13–F19 have no key on most keyboards, which is what makes them
         // useful targets: anything remapped to one can be bound as a
-        // shortcut without clashing with an existing one. macOS stops
-        // recognising function keys after F20.
+        // shortcut without clashing with an existing one. F20 would be the
+        // same, but it's what Lock Screen turns a key into (see
+        // lockScreenStandIn), so it isn't offered.
         Group(title: "Function Keys", keys: (1...12).map { key(0x39 + UInt64($0), "F\($0)") }
-            + (13...20).map { key(0x5B + UInt64($0), "F\($0)") }),
+            + (13...19).map { key(0x5B + UInt64($0), "F\($0)") }),
         Group(title: "Letters", keys: zip(0x04...0x1D, "ABCDEFGHIJKLMNOPQRSTUVWXYZ").map { key(UInt64($0), String($1)) }),
         Group(title: "Numbers", keys: zip(0x1E...0x27, "1234567890").map { key(UInt64($0), String($1)) }),
         Group(title: "Symbols", keys: [
@@ -99,6 +104,34 @@ struct RemappableKey {
 
     static let all: [RemappableKey] = groups.flatMap(\.keys)
 
+    /// The groups a key can be remapped *from*: everything but actions.
+    static let sourceGroups: [Group] = groups.filter { !$0.isTargetOnly }
+
+    // MARK: - Actions
+
+    /// Not a key but an action, offered among the targets: the keyboard
+    /// driver can only turn one key into another, so KeyRemapper writes
+    /// lockScreenStandIn in its place, and the app delegate catches that
+    /// key with a global hot key and locks the screen.
+    ///
+    /// Its usage sits on a page beyond HID's 16-bit range, so it can never
+    /// be mistaken for a key a keyboard actually sends.
+    static let lockScreen = RemappableKey(hidUsage: actionPage << 32 | 0x01, name: "Lock Screen")
+
+    /// F20: a key almost no keyboard has, that macOS still turns into a
+    /// key event (F21 and up produce nothing), and that a Carbon hot key can
+    /// claim without a modifier — so no Accessibility permission is needed
+    /// to catch it.
+    static let lockScreenStandIn: UInt64 = keyboardPage << 32 | 0x6F
+    /// lockScreenStandIn's virtual key code (kVK_F20), for the hot key.
+    static let lockScreenStandInKeyCode: UInt16 = 0x5A
+
+    /// What the keyboard driver should actually be given for `hidUsage`:
+    /// the stand-in key for an action, the usage itself for a real key.
+    static func driverUsage(for hidUsage: UInt64) -> UInt64 {
+        hidUsage == lockScreen.hidUsage ? lockScreenStandIn : hidUsage
+    }
+
     /// Display name for a stored usage. Falls back to the raw number rather
     /// than failing, so a mapping saved by a later version that knows more
     /// keys still shows up (and can still be removed) here.
@@ -111,7 +144,8 @@ struct RemappableKey {
     /// Caps Lock already is. Nil only once every listed key is taken.
     static func suggestedRemap(excluding usedSources: Set<UInt64>) -> KeyRemap? {
         let escape = keyboardPage << 32 | 0x29
-        guard let source = all.first(where: { !usedSources.contains($0.hidUsage) })?.hidUsage else { return nil }
+        let sources = sourceGroups.flatMap(\.keys)
+        guard let source = sources.first(where: { !usedSources.contains($0.hidUsage) })?.hidUsage else { return nil }
         let capsLock = keyboardPage << 32 | 0x39
         return KeyRemap(from: source, to: source == escape ? capsLock : escape)
     }
@@ -126,4 +160,5 @@ struct RemappableKey {
 
     static let keyboardPage: UInt64 = 0x07
     static let consumerPage: UInt64 = 0x0C
+    private static let actionPage: UInt64 = 0x1_0000
 }

@@ -1610,9 +1610,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private func makeKeyRemapRow(_ remap: KeyRemap, index: Int, takenSources: Set<UInt64>) -> NSView {
         let isEnabled = KeyRemapStore.isEnabled
 
-        let sourcePopup = makeKeyPopup(selecting: remap.from, disabling: takenSources, action: #selector(remapSourceChanged(_:)))
+        let sourcePopup = makeKeyPopup(from: RemappableKey.sourceGroups, selecting: remap.from, disabling: takenSources,
+                                       action: #selector(remapSourceChanged(_:)))
         let sourceCaptureButton = makeKeyCaptureButton(action: #selector(captureSourceKey(_:)))
-        let targetPopup = makeKeyPopup(selecting: remap.to, disabling: [], action: #selector(remapTargetChanged(_:)))
+        let targetPopup = makeKeyPopup(from: RemappableKey.groups, selecting: remap.to, disabling: [],
+                                       action: #selector(remapTargetChanged(_:)))
         let targetCaptureButton = makeKeyCaptureButton(action: #selector(captureTargetKey(_:)))
         let arrow = NSTextField(labelWithString: "→")
         // Dims with the pickers either side of it, which grey out on their own.
@@ -1649,11 +1651,13 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         return button
     }
 
-    /// A picker over every key RemappableKey lists, grouped under headers.
-    /// Each item's tag is the key's HID usage, which fits an Int as-is.
-    private func makeKeyPopup(selecting usage: UInt64, disabling disabled: Set<UInt64>, action: Selector) -> NSPopUpButton {
+    /// A picker over `groups`' keys, under a header each — every group for
+    /// a target, everything but actions for a source. Each item's tag is the
+    /// key's HID usage, which fits an Int as-is.
+    private func makeKeyPopup(from groups: [RemappableKey.Group], selecting usage: UInt64,
+                              disabling disabled: Set<UInt64>, action: Selector) -> NSPopUpButton {
         let menu = NSMenu()
-        for (index, group) in RemappableKey.groups.enumerated() {
+        for (index, group) in groups.enumerated() {
             if index > 0 {
                 menu.addItem(.separator())
             }

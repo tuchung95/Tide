@@ -27,6 +27,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private let hotKeyManager = HotKeyManager.shared
     private var hotKeyIDs: [ShortcutAction: UInt32] = [:]
+    /// The hot key on Lock Screen's stand-in key, held only while some key
+    /// is set to lock the screen (see updateLockScreenHotKey).
+    private var lockScreenHotKeyID: UInt32?
     private var settingsWindowController: SettingsWindowController?
 
     // Small per-line font so two stacked lines still fit the menu bar's height.
@@ -69,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.settingsWindowController?.refreshKeyboardPane()
         }
         keyRemapper.start()
+        updateLockScreenHotKey()
 
         // Discovery talks to the monitors over DDC, which is slow, so it
         // runs in the background and calls back once it knows what's out
@@ -625,6 +629,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         controller.onKeyRemapSettingsChanged = { [weak self] in
             self?.keyRemapper.apply()
+            self?.updateLockScreenHotKey()
         }
         controller.keyRemapStatus = { [weak self] in
             self?.keyRemapper.status ?? .off
@@ -758,6 +763,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ShortcutStore.setCombo(combo, for: action)
         refreshShortcutMenuItems()
         return true
+    }
+
+    /// A key set to Lock Screen reaches the system as F20 (see
+    /// RemappableKey.lockScreen), caught here with a plain Carbon hot key —
+    /// no modifier, no Accessibility permission. Only claimed while some
+    /// key is actually set to lock, so F20 is left alone otherwise.
+    private func updateLockScreenHotKey() {
+        let isWanted = KeyRemapStore.isEnabled && KeyRemapStore.hasLockScreenRemap
+        if isWanted, lockScreenHotKeyID == nil {
+            let standIn = KeyCombo(keyCode: RemappableKey.lockScreenStandInKeyCode, modifierFlags: [])
+            lockScreenHotKeyID = hotKeyManager.register(combo: standIn) {
+                ScreenLocker.lock()
+            }
+        } else if !isWanted, let id = lockScreenHotKeyID {
+            hotKeyManager.unregister(id: id)
+            lockScreenHotKeyID = nil
+        }
     }
 
     @objc private func quit() {

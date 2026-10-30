@@ -105,7 +105,10 @@ final class KeyRemapper {
         var failedKeyboardName: String?
 
         for service in keyboardServices() {
-            let wanted = isEnabled ? KeyRemapStore.effectiveRemaps(for: service.keyboard) : []
+            // In the driver's terms, actions swapped for their stand-in
+            // keys — which is also what reading the property back returns.
+            let wanted = (isEnabled ? KeyRemapStore.effectiveRemaps(for: service.keyboard) : [])
+                .map { KeyRemap(from: $0.from, to: RemappableKey.driverUsage(for: $0.to)) }
 
             if wanted.isEmpty {
                 if remappedServiceIDs.contains(service.registryID), !Self.setRemaps([], on: service.client) {
