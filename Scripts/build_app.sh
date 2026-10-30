@@ -17,7 +17,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP_NAME="Tide"
-APP_BUNDLE="${APP_NAME}.app"
 SOURCES=(Sources/Tide/*.swift)
 REPO="tuchung95/Tide"
 SKIP_RELEASE="${SKIP_RELEASE:-0}"
@@ -70,8 +69,17 @@ else
     echo "Version: ${CURRENT_VERSION} -> ${NEW_VERSION}"
 fi
 
+# Assembled and signed in a temporary folder on the startup disk rather than
+# in the repo: on a non-Apple volume (the repo lives on an ExFAT SSD) macOS
+# keeps each file's extended attributes in a "._" AppleDouble file beside
+# it, and it tags every new file with com.apple.provenance — so a bundle
+# built in place fills up with "._Tide" and friends, and codesign refuses
+# to sign it ("Operation not permitted ... In subcomponent: ._Tide").
+STAGING_DIR=$(mktemp -d)
+trap 'rm -rf "${STAGING_DIR}"' EXIT
+APP_BUNDLE="${STAGING_DIR}/${APP_NAME}.app"
+
 echo "Assembling ${APP_BUNDLE}..."
-rm -rf "${APP_BUNDLE}"
 mkdir -p "${APP_BUNDLE}/Contents/MacOS"
 mkdir -p "${APP_BUNDLE}/Contents/Resources"
 
@@ -105,11 +113,11 @@ fi
 
 echo "Done: ${APP_BUNDLE}"
 
-# Installed to /Applications on every build, not just left in this dev
-# folder: running two separate copies (dev folder vs /Applications) is how
+# Installed to /Applications on every build, not just left where it was
+# built: running two separate copies (dev folder vs /Applications) is how
 # a stale, differently-signed /Applications copy silently keeps eating
 # Screen Recording grants meant for the copy actually being rebuilt.
-INSTALL_PATH="/Applications/${APP_BUNDLE}"
+INSTALL_PATH="/Applications/${APP_NAME}.app"
 echo "Installing to ${INSTALL_PATH}..."
 pkill -x "${APP_NAME}" 2>/dev/null || true
 sleep 0.5
