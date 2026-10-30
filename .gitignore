@@ -4,3 +4,6 @@
 DerivedData/
 .DS_Store
 .env
+# AppleDouble files macOS writes beside every file on a non-Apple volume
+# (the repo lives on an ExFAT SSD).
+._*
