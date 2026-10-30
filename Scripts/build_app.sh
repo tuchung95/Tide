@@ -33,7 +33,7 @@ SKIP_RELEASE="${SKIP_RELEASE:-0}"
 # worse still: its identity is re-derived from the binary's hash on every
 # rebuild. See README "Chữ ký và quyền hệ thống" for how to import the
 # shared certificate on a new build machine.
-SIGNING_LEAF="0C3381B9A5B46311AA9E6D3CC99567B4E4BB8831"
+SIGNING_LEAF="F2D442D0862958C0C6F721448F0E9F7BEC83D768"
 if security find-identity -v -p codesigning 2>/dev/null | grep -qi "${SIGNING_LEAF}"; then
     SIGN_IDENTITY="${SIGNING_LEAF}"
 elif [ "${SKIP_RELEASE}" = "1" ]; then

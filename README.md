@@ -160,7 +160,7 @@ Chuyển file sang máy mới (AirDrop, không commit vào repo), rồi import v
 
 ```bash
 security import ~/Desktop/TideLocalDev.p12 -k ~/Library/Keychains/login.keychain-db -T /usr/bin/codesign
-security find-identity -v -p codesigning   # phải thấy đúng hash 0C3381B9A5B46311AA9E6D3CC99567B4E4BB8831
+security find-identity -v -p codesigning   # phải thấy đúng hash F2D442D0862958C0C6F721448F0E9F7BEC83D768
 ```
 
 Nếu máy mới trước đó đã tự tạo một `Tide Local Dev` khác, xoá nó đi trong Keychain Access để tránh lẫn; các quyền đã cấp cho bản ký bằng cert cũ trên máy đó sẽ phải cấp lại **một lần** (`tccutil reset ScreenCapture com.tide.menubar; tccutil reset Accessibility com.tide.menubar`, rồi bật lại từ prompt của app).
