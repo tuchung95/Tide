@@ -1,6 +1,6 @@
 # Tide
 
-macOS menu bar app: tốc độ mạng thời gian thực, chụp ảnh màn hình, và hướng cuộn riêng cho chuột với trackpad — tất cả gọn trong một icon trên menu bar, không chiếm chỗ ở Dock.
+macOS menu bar app: tốc độ mạng thời gian thực, chụp ảnh màn hình, hướng cuộn riêng cho chuột với trackpad, và đổi phím riêng cho từng bàn phím — tất cả gọn trong một icon trên menu bar, không chiếm chỗ ở Dock.
 
 Tạo bởi **Louis Chung**.
 
@@ -63,6 +63,17 @@ Tide giải quyết bằng cách để nguyên setting của hệ thống cho m�
 - Chỉ đảo trục dọc — trục ngang giữ nguyên cho các gesture vuốt qua lại.
 - Cần quyền **Accessibility**; cấp xong là chạy ngay, không phải khởi động lại app.
 
+### Đổi phím riêng cho từng bàn phím
+
+Đổi một phím thành phím khác, ví dụ Caps Lock thành Esc, hay đổi chỗ ⌘ với ⌥ trên bàn phím Windows, mà không ảnh hưởng các bàn phím khác.
+
+- Settings → **Keyboard**: chọn bàn phím ở ô **Keyboard**, bấm **Add Mapping**, rồi chọn phím gốc → phím mới. Danh sách có modifier trái/phải, Esc/Return/Tab/Space/Delete, phím điều hướng, các phím riêng của bàn phím PC (Print Screen, Scroll Lock, Pause, Insert, Menu…), F1–F20, chữ, số và ký hiệu. Tên phím theo vị trí trên bàn phím US.
+- Chọn được **All Keyboards**, **Built-in Keyboard** (chỉ hiện khi máy có), **External Keyboards**, hoặc **một bàn phím cụ thể**. Cùng một phím bị đổi ở nhiều chỗ thì chỗ hẹp hơn thắng: bàn phím cụ thể > Built-in/External > All Keyboards. Bàn phím đã có mapping mà đang không kết nối vẫn nằm trong danh sách (nhóm *Not Connected*) để xem hoặc xoá.
+- Nhận ra lại đúng bàn phím mỗi lần kết nối bằng `PhysicalDeviceUniqueID` (bàn phím Bluetooth) hoặc số serial; không có thì theo VendorID + ProductID + tên, nên hai bàn phím giống hệt nhau và không có serial sẽ dùng chung mapping. Không dựa riêng vào VendorID/ProductID vì nhiều bàn phím Bluetooth LE báo cả hai bằng 0.
+- Đổi phím ngay trong driver bàn phím của macOS (thuộc tính `UserKeyMapping`, cùng cơ chế với `hidutil`), nên **không cần quyền gì**, chạy được cả trong ô mật khẩu (nơi Secure Input chặn mọi event tap), và modifier sau khi đổi hoạt động y như modifier thật. Đổi lại chỉ làm được phím → phím, không phải tổ hợp phím.
+- Không đè lên **Modifier Keys** trong System Settings → Keyboard: macOS lưu cái đó ở một thuộc tính khác.
+- Mapping mất khi bàn phím ngắt kết nối (Bluetooth sau khi máy ngủ, USB rút ra cắm lại), nên Tide theo dõi và tự áp lại. Thoát Tide thì mọi phím trở lại bình thường.
+
 ### Khác
 
 - **Launch at Login** — tự khởi động cùng macOS (chỉ hoạt động khi chạy từ bản `.app` đã đóng gói).
@@ -89,6 +100,8 @@ Dạng sidebar-tabs giống System Settings, chia theo chức năng. Mỗi nhóm
 
 ![Pane Scrolling](docs/pane-scrolling.png)
 
+**Keyboard** — công tắc **Remap Keys**, ô chọn bàn phím (kèm số mapping của từng mục), danh sách mapping (mỗi dòng: phím gốc → phím mới, nút ⊖ để xoá) và dòng trạng thái cạnh nút **Add Mapping**. Đổi gì áp dụng ngay. Pane này không có Restore Defaults: xoá từng dòng, hoặc tắt Remap Keys để tạm ngưng tất cả.
+
 ## Cài đặt
 
 1. Tải `Tide-vX.Y.Z.zip` ở [releases/latest](https://github.com/tuchung95/Tide/releases/latest).
@@ -103,6 +116,8 @@ Yêu cầu macOS 13 (Ventura) trở lên.
 |---|---|---|
 | **Screen Recording** | Chụp ảnh màn hình | Lần chụp đầu tiên |
 | **Accessibility** | Đảo hướng cuộn theo thiết bị; bắt phím âm lượng cho loa màn hình | Khi bật Reverse Scroll Direction hoặc Volume Keys Control Monitor Speakers |
+
+Đổi phím (pane Keyboard) không cần quyền nào.
 
 Nếu System Settings đã hiện Tide được bật mà app vẫn báo thiếu quyền: tắt rồi bật lại mục Tide trong danh sách. macOS gắn quyền theo chữ ký của bản build, nên một entry cũ vẫn nằm trong danh sách nhưng không còn hiệu lực — chi tiết và cách chẩn đoán ở mục [Chữ ký và quyền hệ thống](#chữ-ký-và-quyền-hệ-thống).
 

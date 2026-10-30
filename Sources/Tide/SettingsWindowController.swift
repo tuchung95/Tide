@@ -45,6 +45,17 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// working.
     var isVolumeKeyTapActive: (() -> Bool)?
 
+    /// Triggered after any key remap changes, so the app delegate can
+    /// push the new mappings to the keyboards right away.
+    var onKeyRemapSettingsChanged: (() -> Void)?
+
+    /// What the remapper did with the current settings, for the Keyboard
+    /// pane's status line.
+    var keyRemapStatus: (() -> KeyRemapper.Status)?
+
+    /// The keyboards plugged in right now, for the Keyboard pane's picker.
+    var connectedKeyboards: (() -> [KeyRemapper.Keyboard])?
+
     /// Fired when this window closes, so the app delegate can drop the
     /// Dock icon it puts up while Settings is open.
     var onWindowClose: (() -> Void)?
@@ -55,6 +66,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         case speedMeter
         case display
         case scrolling
+        case keyboard
 
         var title: String {
             switch self {
@@ -63,6 +75,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             case .speedMeter: return "Speed Meter"
             case .display: return "Display"
             case .scrolling: return "Scrolling"
+            case .keyboard: return "Keyboard"
             }
         }
 
@@ -79,6 +92,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             case .speedMeter: return "SidebarSpeedMeterIcon"
             case .display: return "SidebarDisplayIcon"
             case .scrolling: return "SidebarScrollingIcon"
+            // Drawn for Tide rather than taken from macosicons.com like the
+            // rest, but cut the same way: artwork filling the canvas.
+            case .keyboard: return "SidebarKeyboardIcon"
             }
         }
     }
@@ -159,6 +175,17 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private var volumeKeyStatusDot: NSBox!
     private var volumeKeySwitch: NSSwitch!
     private var volumeKeyStatusLabel: NSTextField!
+    private var keyRemapSwitch: NSSwitch!
+    private var keyboardScopePopup: NSPopUpButton!
+    private var keyRemapListStack: NSStackView!
+    private var keyRemapEmptyLabel: NSTextField!
+    private var addKeyRemapButton: NSButton!
+    private var keyRemapStatusDot: NSBox!
+    private var keyRemapStatusLabel: NSTextField!
+    /// The keyboard whose mappings the Keyboard pane's list is showing.
+    private var selectedKeyboardScope: KeyboardScope = .allKeyboards
+    /// The scope picker's entries; each item's tag indexes into this.
+    private var keyboardScopeOptions: [(scope: KeyboardScope, name: String?)] = []
 
     convenience init() {
         let window = NSWindow(
@@ -642,6 +669,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         case .speedMeter: return buildSpeedMeterPane()
         case .display: return buildDisplayPane()
         case .scrolling: return buildScrollingPane()
+        case .keyboard: return buildKeyboardPane()
         }
     }
 
@@ -742,15 +770,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
             if index < rows.count - 1 {
-                // .separator boxType draws at the system's full separator
-                // opacity; a flat light gray-white reads as a fainter
-                // hairline instead.
-                let divider = NSBox()
-                divider.boxType = .custom
-                divider.borderWidth = 0
-                divider.fillColor = Self.cardDividerColor
-                divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
-                stack.addArrangedSubview(divider)
+                stack.addArrangedSubview(makeCardDivider())
             }
         }
 
@@ -762,6 +782,18 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             stack.bottomAnchor.constraint(equalTo: box.bottomAnchor)
         ])
         return box
+    }
+
+    /// The hairline between a card's rows. .separator boxType draws at the
+    /// system's full separator opacity; a flat light gray-white reads as a
+    /// fainter hairline instead.
+    private func makeCardDivider() -> NSBox {
+        let divider = NSBox()
+        divider.boxType = .custom
+        divider.borderWidth = 0
+        divider.fillColor = Self.cardDividerColor
+        divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        return divider
     }
 
     /// A card row holding stacked wrapping text instead of a control —
@@ -1313,6 +1345,368 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         refreshScrollStatus()
     }
 
+    // MARK: - Keyboard pane
+
+    /// How many mappings the list shows before it scrolls. Fixed rather
+    /// than growing with the list: every pane shares the one window, which
+    /// a growing list would drag taller with each key added.
+    private static let keyRemapVisibleRows = 3
+    // Wide enough for the longest key name, so the arrows line up down
+    // the list instead of following each row's text.
+    private static let keyPopupWidth: CGFloat = 150
+    // Keyboards name themselves; a long name truncates rather than
+    // pushing the picker out of the card.
+    private static let keyboardScopePopupMaxWidth: CGFloat = 240
+
+    private func buildKeyboardPane() -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 16
+
+        stack.addArrangedSubview(makePaneTitle("Keyboard"))
+
+        keyRemapSwitch = makeSwitch(isOn: KeyRemapStore.isEnabled, action: #selector(toggleKeyRemap(_:)))
+        let enabledRow = makeRow(leading: NSTextField(labelWithString: "Remap Keys"), trailing: keyRemapSwitch)
+
+        keyboardScopePopup = NSPopUpButton()
+        keyboardScopePopup.target = self
+        keyboardScopePopup.action = #selector(keyboardScopeChanged(_:))
+        keyboardScopePopup.widthAnchor.constraint(lessThanOrEqualToConstant: Self.keyboardScopePopupMaxWidth).isActive = true
+        let scopeRow = makeRow(leading: NSTextField(labelWithString: "Keyboard"), trailing: keyboardScopePopup)
+
+        addKeyRemapButton = NSButton(title: "Add Mapping", target: self, action: #selector(addKeyRemap))
+        addKeyRemapButton.bezelStyle = .rounded
+
+        // The status sits beside the Add button instead of in a card of its
+        // own like the other panes' — this pane's list already takes the
+        // room that card would need.
+        keyRemapStatusDot = makeStatusDot()
+        keyRemapStatusLabel = NSTextField(labelWithString: "")
+        keyRemapStatusLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        let statusLine = NSStackView(views: [keyRemapStatusDot, keyRemapStatusLabel])
+        statusLine.spacing = Self.statusDotGap
+        NSLayoutConstraint.activate([
+            keyRemapStatusDot.widthAnchor.constraint(equalToConstant: Self.statusDotSize),
+            keyRemapStatusDot.heightAnchor.constraint(equalToConstant: Self.statusDotSize)
+        ])
+        let footerRow = makeRow(leading: addKeyRemapButton, trailing: statusLine)
+
+        let card = makeCard(rows: [enabledRow, scopeRow, makeKeyRemapList(), footerRow])
+        card.widthAnchor.constraint(equalToConstant: Self.paneCardWidth).isActive = true
+        stack.addArrangedSubview(card)
+
+        let caption = NSTextField(wrappingLabelWithString: "Keys are remapped inside macOS’s keyboard driver, so it works in every app, password fields included, and needs no permission. A keyboard’s own mappings win over Built-in or External, which win over All Keyboards. Keys go back to normal when Tide quits.")
+        caption.font = NSFont.systemFont(ofSize: 11)
+        caption.textColor = .secondaryLabelColor
+        let notesCard = makeCard(rows: [makeTextRow(labels: [caption])])
+        notesCard.widthAnchor.constraint(equalToConstant: Self.paneCardWidth).isActive = true
+        stack.addArrangedSubview(notesCard)
+
+        // Open on a keyboard that has something to show, rather than on an
+        // empty All Keyboards list that reads as "nothing is set up".
+        let candidates: [KeyboardScope] = [.allKeyboards, .builtIn, .external]
+            + KeyRemapStore.configuredKeyboards.map { .keyboard(id: $0.id) }
+        selectedKeyboardScope = candidates.first { !KeyRemapStore.remaps(for: $0).isEmpty } ?? .allKeyboards
+
+        refreshKeyboardPane()
+        return stack
+    }
+
+    /// The scrolling list of the selected keyboard's mappings, one row per
+    /// remapped key. Filled in by reloadKeyRemapList().
+    private func makeKeyRemapList() -> NSView {
+        keyRemapListStack = NSStackView()
+        keyRemapListStack.orientation = .vertical
+        keyRemapListStack.spacing = 0
+        keyRemapListStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let document = FlippedView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(keyRemapListStack)
+
+        let scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        // A short list shouldn't rubber-band inside its card.
+        scrollView.verticalScrollElasticity = .none
+        scrollView.documentView = document
+
+        keyRemapEmptyLabel = NSTextField(labelWithString: "No keys remapped yet.")
+        keyRemapEmptyLabel.textColor = .tertiaryLabelColor
+        keyRemapEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let container = NSView()
+        container.addSubview(scrollView)
+        container.addSubview(keyRemapEmptyLabel)
+
+        // Full rows plus the hairlines between them.
+        let visibleHeight = rowHeight * CGFloat(Self.keyRemapVisibleRows) + CGFloat(Self.keyRemapVisibleRows - 1)
+        NSLayoutConstraint.activate([
+            container.heightAnchor.constraint(equalToConstant: visibleHeight),
+
+            scrollView.topAnchor.constraint(equalTo: container.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
+            document.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            document.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            document.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+
+            keyRemapListStack.topAnchor.constraint(equalTo: document.topAnchor),
+            keyRemapListStack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            keyRemapListStack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            keyRemapListStack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+
+            keyRemapEmptyLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            keyRemapEmptyLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor)
+        ])
+        return container
+    }
+
+    /// Re-reads everything the Keyboard pane shows: the keyboards plugged
+    /// in, the selected one's mappings, and what the remapper made of
+    /// them. Called on every change here, and by the app delegate when a
+    /// keyboard comes or goes and whenever the window opens.
+    func refreshKeyboardPane() {
+        guard keyboardScopePopup != nil else { return }
+        reloadKeyboardScopes()
+        reloadKeyRemapList()
+        refreshKeyRemapStatus()
+    }
+
+    /// Rebuilds the keyboard picker: the three broad scopes, then each
+    /// connected keyboard, then any keyboard that has mappings saved but
+    /// isn't connected — still listed, so they can be seen and removed.
+    /// Each title carries its mapping count, so mappings set on one scope
+    /// don't go unnoticed while another is showing.
+    private func reloadKeyboardScopes() {
+        let connected = connectedKeyboards?() ?? []
+        let menu = NSMenu()
+        var options: [(scope: KeyboardScope, name: String?)] = []
+
+        func addScope(_ scope: KeyboardScope, title: String, name: String? = nil) {
+            let count = KeyRemapStore.remaps(for: scope).count
+            let item = NSMenuItem(title: count > 0 ? "\(title) (\(count))" : title, action: nil, keyEquivalent: "")
+            item.tag = options.count
+            options.append((scope, name))
+            menu.addItem(item)
+        }
+
+        addScope(.allKeyboards, title: "All Keyboards")
+        // Only where it means something: a desktop Mac has no built-in
+        // keyboard, unless mappings were saved for one on a laptop.
+        if connected.contains(where: \.isBuiltIn) || !KeyRemapStore.remaps(for: .builtIn).isEmpty {
+            addScope(.builtIn, title: "Built-in Keyboard")
+        }
+        addScope(.external, title: "External Keyboards")
+
+        // The built-in keyboard is already covered by its own scope above.
+        let externals = connected.filter { !$0.isBuiltIn }
+        if !externals.isEmpty {
+            menu.addItem(.separator())
+            for keyboard in externals {
+                addScope(.keyboard(id: keyboard.id), title: keyboard.name, name: keyboard.name)
+            }
+        }
+
+        let disconnected = KeyRemapStore.configuredKeyboards.filter { saved in
+            !connected.contains { $0.id == saved.id }
+        }
+        if !disconnected.isEmpty {
+            menu.addItem(.separator())
+            menu.addItem(makeMenuSectionHeader("Not Connected"))
+            for keyboard in disconnected {
+                addScope(.keyboard(id: keyboard.id), title: keyboard.name, name: keyboard.name)
+            }
+        }
+
+        keyboardScopeOptions = options
+        // A keyboard that was showing can drop out of the list (its last
+        // mapping removed while it's unplugged); fall back to the first.
+        if !options.contains(where: { $0.scope == selectedKeyboardScope }) {
+            selectedKeyboardScope = .allKeyboards
+        }
+        keyboardScopePopup.menu = menu
+        keyboardScopePopup.autoenablesItems = false
+        keyboardScopePopup.selectItem(withTag: options.firstIndex { $0.scope == selectedKeyboardScope } ?? 0)
+        keyboardScopePopup.isEnabled = KeyRemapStore.isEnabled
+    }
+
+    private func reloadKeyRemapList() {
+        for view in keyRemapListStack.arrangedSubviews {
+            view.removeFromSuperview()
+        }
+
+        let remaps = KeyRemapStore.remaps(for: selectedKeyboardScope)
+        let sources = Set(remaps.map(\.from))
+        for (index, remap) in remaps.enumerated() {
+            if index > 0 {
+                keyRemapListStack.addArrangedSubview(makeCardDivider())
+            }
+            // A key can only be remapped once per keyboard, so each row's
+            // source picker greys out the keys the other rows already use.
+            let row = makeKeyRemapRow(remap, index: index, takenSources: sources.subtracting([remap.from]))
+            row.translatesAutoresizingMaskIntoConstraints = false
+            keyRemapListStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: keyRemapListStack.widthAnchor).isActive = true
+        }
+
+        keyRemapEmptyLabel.isHidden = !remaps.isEmpty
+        addKeyRemapButton.isEnabled = KeyRemapStore.isEnabled
+    }
+
+    private func makeKeyRemapRow(_ remap: KeyRemap, index: Int, takenSources: Set<UInt64>) -> NSView {
+        let isEnabled = KeyRemapStore.isEnabled
+
+        let sourcePopup = makeKeyPopup(selecting: remap.from, disabling: takenSources, action: #selector(remapSourceChanged(_:)))
+        let targetPopup = makeKeyPopup(selecting: remap.to, disabling: [], action: #selector(remapTargetChanged(_:)))
+        let arrow = NSTextField(labelWithString: "→")
+        // Dims with the pickers either side of it, which grey out on their own.
+        arrow.textColor = isEnabled ? .secondaryLabelColor : .tertiaryLabelColor
+        let keys = NSStackView(views: [sourcePopup, arrow, targetPopup])
+        keys.spacing = 8
+
+        let removeImage = NSImage(systemSymbolName: "minus.circle.fill", accessibilityDescription: "Remove Mapping") ?? NSImage()
+        let removeButton = NSButton(image: removeImage, target: self, action: #selector(removeKeyRemap(_:)))
+        removeButton.isBordered = false
+        removeButton.contentTintColor = .secondaryLabelColor
+
+        // The tag carries the row's index back to the action.
+        for control in [sourcePopup, targetPopup, removeButton] {
+            control.tag = index
+            control.isEnabled = isEnabled
+        }
+        return makeRow(leading: keys, trailing: removeButton)
+    }
+
+    /// A picker over every key RemappableKey lists, grouped under headers.
+    /// Each item's tag is the key's HID usage, which fits an Int as-is.
+    private func makeKeyPopup(selecting usage: UInt64, disabling disabled: Set<UInt64>, action: Selector) -> NSPopUpButton {
+        let menu = NSMenu()
+        for (index, group) in RemappableKey.groups.enumerated() {
+            if index > 0 {
+                menu.addItem(.separator())
+            }
+            menu.addItem(makeMenuSectionHeader(group.title))
+            for key in group.keys {
+                let item = NSMenuItem(title: key.name, action: nil, keyEquivalent: "")
+                item.tag = Int(key.hidUsage)
+                item.isEnabled = !disabled.contains(key.hidUsage)
+                menu.addItem(item)
+            }
+        }
+        // A key this version doesn't list (saved by a newer one) still has
+        // to show as selected, or the picker would claim some other key.
+        if menu.indexOfItem(withTag: Int(usage)) < 0 {
+            let item = NSMenuItem(title: RemappableKey.name(for: usage), action: nil, keyEquivalent: "")
+            item.tag = Int(usage)
+            menu.insertItem(item, at: 0)
+        }
+
+        let popup = NSPopUpButton()
+        popup.menu = menu
+        // Off so the greyed-out keys stay greyed out: with it on, AppKit
+        // re-enables every item that the popup's own action can handle.
+        popup.autoenablesItems = false
+        popup.selectItem(withTag: Int(usage))
+        popup.target = self
+        popup.action = action
+        popup.widthAnchor.constraint(equalToConstant: Self.keyPopupWidth).isActive = true
+        return popup
+    }
+
+    /// A non-selectable title over a group of menu items.
+    private func makeMenuSectionHeader(_ title: String) -> NSMenuItem {
+        if #available(macOS 14.0, *) {
+            return NSMenuItem.sectionHeader(title: title)
+        }
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+
+    private func refreshKeyRemapStatus() {
+        switch keyRemapStatus?() ?? .off {
+        case .off:
+            applyStatus(dot: keyRemapStatusDot, label: keyRemapStatusLabel, "Off", .secondaryLabelColor)
+        case .idle:
+            applyStatus(dot: keyRemapStatusDot, label: keyRemapStatusLabel, "No keyboard remapped", .secondaryLabelColor)
+        case .active(let keyboardCount):
+            let noun = keyboardCount == 1 ? "keyboard" : "keyboards"
+            applyStatus(dot: keyRemapStatusDot, label: keyRemapStatusLabel,
+                        "Active on \(keyboardCount) \(noun)", .systemGreen)
+        case .failed(let keyboardName):
+            applyStatus(dot: keyRemapStatusDot, label: keyRemapStatusLabel,
+                        "Couldn’t remap \(keyboardName)", .systemOrange)
+        }
+    }
+
+    @objc private func toggleKeyRemap(_ sender: NSSwitch) {
+        KeyRemapStore.isEnabled = sender.state == .on
+        keyRemapsDidChange()
+    }
+
+    @objc private func keyboardScopeChanged(_ sender: NSPopUpButton) {
+        guard keyboardScopeOptions.indices.contains(sender.selectedTag()) else { return }
+        selectedKeyboardScope = keyboardScopeOptions[sender.selectedTag()].scope
+        reloadKeyRemapList()
+    }
+
+    @objc private func addKeyRemap() {
+        var remaps = KeyRemapStore.remaps(for: selectedKeyboardScope)
+        guard let remap = RemappableKey.suggestedRemap(excluding: Set(remaps.map(\.from))) else {
+            NSSound.beep()
+            return
+        }
+        remaps.append(remap)
+        saveKeyRemaps(remaps)
+
+        // The new row lands at the bottom, which may be below the fold.
+        keyRemapListStack.layoutSubtreeIfNeeded()
+        if let newRow = keyRemapListStack.arrangedSubviews.last {
+            newRow.scrollToVisible(newRow.bounds)
+        }
+    }
+
+    @objc private func remapSourceChanged(_ sender: NSPopUpButton) {
+        updateKeyRemap(at: sender.tag) { $0.from = UInt64(sender.selectedTag()) }
+    }
+
+    @objc private func remapTargetChanged(_ sender: NSPopUpButton) {
+        updateKeyRemap(at: sender.tag) { $0.to = UInt64(sender.selectedTag()) }
+    }
+
+    @objc private func removeKeyRemap(_ sender: NSButton) {
+        var remaps = KeyRemapStore.remaps(for: selectedKeyboardScope)
+        guard remaps.indices.contains(sender.tag) else { return }
+        remaps.remove(at: sender.tag)
+        saveKeyRemaps(remaps)
+    }
+
+    private func updateKeyRemap(at index: Int, _ change: (inout KeyRemap) -> Void) {
+        var remaps = KeyRemapStore.remaps(for: selectedKeyboardScope)
+        guard remaps.indices.contains(index) else { return }
+        change(&remaps[index])
+        saveKeyRemaps(remaps)
+    }
+
+    private func saveKeyRemaps(_ remaps: [KeyRemap]) {
+        let keyboardName = keyboardScopeOptions.first { $0.scope == selectedKeyboardScope }?.name
+        KeyRemapStore.setRemaps(remaps, for: selectedKeyboardScope, keyboardName: keyboardName)
+        keyRemapsDidChange()
+    }
+
+    /// Applied live, like every other pane: the keyboards change as soon
+    /// as a picker does.
+    private func keyRemapsDidChange() {
+        onKeyRemapSettingsChanged?()
+        refreshKeyboardPane()
+    }
+
     // MARK: - Shortcut recording (trailing control of a Screenshot row)
 
     private func makeShortcutRecorder(for action: ShortcutAction) -> NSView {
@@ -1583,4 +1977,11 @@ private final class SidebarCellView: NSTableCellView {
             textField?.textColor = isRowSelected ? .white : .labelColor
         }
     }
+}
+
+/// Document view for the Keyboard pane's mapping list. Flipped so a list
+/// shorter than the scroll view sits at its top, where the first row
+/// belongs, rather than at the bottom where AppKit's unflipped origin is.
+private final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
 }

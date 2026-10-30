@@ -84,6 +84,7 @@ cp "Resources/SidebarScreenshotIcon.png" "${APP_BUNDLE}/Contents/Resources/Sideb
 cp "Resources/SidebarSpeedMeterIcon.png" "${APP_BUNDLE}/Contents/Resources/SidebarSpeedMeterIcon.png"
 cp "Resources/SidebarScrollingIcon.png" "${APP_BUNDLE}/Contents/Resources/SidebarScrollingIcon.png"
 cp "Resources/SidebarDisplayIcon.png" "${APP_BUNDLE}/Contents/Resources/SidebarDisplayIcon.png"
+cp "Resources/SidebarKeyboardIcon.png" "${APP_BUNDLE}/Contents/Resources/SidebarKeyboardIcon.png"
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${NEW_VERSION}" "${APP_BUNDLE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${NEW_VERSION}" "${APP_BUNDLE}/Contents/Info.plist"

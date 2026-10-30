@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private let networkMonitor = NetworkMonitor()
     private let scrollDirectionManager = ScrollDirectionManager()
+    private let keyRemapper = KeyRemapper()
     private let displayController = DisplayController()
     private lazy var volumeKeyManager = MonitorVolumeKeyManager(displayController: displayController)
     private let volumeHUD = VolumeHUD()
@@ -60,6 +61,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.offerRelaunchForAccessibility()
         }
         scrollDirectionManager.apply()
+
+        // Needs no permission, so unlike the taps there's nothing to wait
+        // for: the keyboards are remapped right here, and again whenever
+        // one connects (the mapping doesn't survive a reconnect).
+        keyRemapper.onKeyboardsChanged = { [weak self] in
+            self?.settingsWindowController?.refreshKeyboardPane()
+        }
+        keyRemapper.start()
 
         // Discovery talks to the monitors over DDC, which is slow, so it
         // runs in the background and calls back once it knows what's out
@@ -110,6 +119,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // A software gamma dim survives the process that installed it, so
         // quitting without this would leave the display stuck dim.
         displayController.shutDown()
+        // Same story for key remaps: they live in the keyboard driver and
+        // would otherwise stay until the next restart.
+        keyRemapper.removeAll()
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -611,6 +623,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.isVolumeKeyTapActive = { [weak self] in
             self?.volumeKeyManager.isRunning ?? false
         }
+        controller.onKeyRemapSettingsChanged = { [weak self] in
+            self?.keyRemapper.apply()
+        }
+        controller.keyRemapStatus = { [weak self] in
+            self?.keyRemapper.status ?? .off
+        }
+        controller.connectedKeyboards = { [weak self] in
+            self?.keyRemapper.connectedKeyboards ?? []
+        }
         controller.onWindowClose = {
             // Back to menu-bar-only once Settings is gone — but only on
             // the next run loop pass: windowWillClose fires while the
@@ -633,6 +654,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // was last open.
         controller.refreshScrollStatus()
         controller.refreshVolumeKeyStatus()
+        controller.refreshKeyboardPane()
         // The app is LSUIElement, so it normally has no Dock icon and no
         // menu bar at all. While Settings is open it becomes a regular
         // app: the window then shows up in the Dock and in ⌘-Tab like any
