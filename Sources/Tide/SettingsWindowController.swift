@@ -56,6 +56,14 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// The keyboards plugged in right now, for the Keyboard pane's picker.
     var connectedKeyboards: (() -> [KeyRemapper.Keyboard])?
 
+    /// Which keyboard sent a key, by the event's sender ID — for picking a
+    /// keyboard, or a key, by pressing it.
+    var keyboardForSenderID: ((UInt64) -> KeyRemapper.Keyboard?)?
+
+    /// Lifts Tide's own remaps while the Keyboard pane listens for a key,
+    /// so the key reads as what it physically is.
+    var setKeyRemapSuspended: ((Bool) -> Void)?
+
     /// Fired when this window closes, so the app delegate can drop the
     /// Dock icon it puts up while Settings is open.
     var onWindowClose: (() -> Void)?
@@ -186,6 +194,25 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private var selectedKeyboardScope: KeyboardScope = .allKeyboards
     /// The scope picker's entries; each item's tag indexes into this.
     private var keyboardScopeOptions: [(scope: KeyboardScope, name: String?)] = []
+    private var identifyKeyboardButton: NSButton!
+    /// Each mapping row's pickers and their press-to-pick buttons, by row.
+    private var keyRemapRowControls: [KeyRemapRowControls] = []
+    private let keyCapture = KeyCapture()
+    /// What the next key pressed will set, while the pane is listening.
+    private var keyCaptureTarget: KeyCaptureTarget?
+
+    private struct KeyRemapRowControls {
+        let sourcePopup: NSPopUpButton
+        let sourceCaptureButton: NSButton
+        let targetPopup: NSPopUpButton
+        let targetCaptureButton: NSButton
+    }
+
+    private enum KeyCaptureTarget: Equatable {
+        case source(row: Int)
+        case target(row: Int)
+        case keyboard
+    }
 
     convenience init() {
         let window = NSWindow(
@@ -228,7 +255,14 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     }
 
     func windowWillClose(_ notification: Notification) {
+        endKeyCapture()
         onWindowClose?()
+    }
+
+    /// The key the Keyboard pane is waiting for would go to another window
+    /// now, so stop waiting rather than leave Tide's remaps lifted.
+    func windowDidResignKey(_ notification: Notification) {
+        endKeyCapture()
     }
 
     // Hand-drawn replacements for the native traffic-light buttons: the
@@ -657,6 +691,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     }
 
     private func showPane(for tab: Tab) {
+        endKeyCapture()
         for (candidate, pane) in panes {
             pane.isHidden = (candidate != tab)
         }
@@ -1373,7 +1408,15 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         keyboardScopePopup.target = self
         keyboardScopePopup.action = #selector(keyboardScopeChanged(_:))
         keyboardScopePopup.widthAnchor.constraint(lessThanOrEqualToConstant: Self.keyboardScopePopupMaxWidth).isActive = true
-        let scopeRow = makeRow(leading: NSTextField(labelWithString: "Keyboard"), trailing: keyboardScopePopup)
+        // Keyboards name themselves, sometimes unhelpfully ("Keyboard",
+        // a receiver's name, two of the same model): pressing a key on one
+        // is the surest way to say which.
+        identifyKeyboardButton = NSButton(title: "Identify", target: self, action: #selector(identifyKeyboard))
+        identifyKeyboardButton.bezelStyle = .rounded
+        identifyKeyboardButton.toolTip = "Press a key on a keyboard to show its mappings"
+        let scopeControls = NSStackView(views: [identifyKeyboardButton, keyboardScopePopup])
+        scopeControls.spacing = 8
+        let scopeRow = makeRow(leading: NSTextField(labelWithString: "Keyboard"), trailing: scopeControls)
 
         addKeyRemapButton = NSButton(title: "Add Mapping", target: self, action: #selector(addKeyRemap))
         addKeyRemapButton.bezelStyle = .rounded
@@ -1476,6 +1519,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         reloadKeyboardScopes()
         reloadKeyRemapList()
         refreshKeyRemapStatus()
+        // A keyboard connecting mid-listen rebuilds the pickers under the
+        // prompt, so it has to be put back.
+        showKeyCapturePrompt()
     }
 
     /// Rebuilds the keyboard picker: the three broad scopes, then each
@@ -1534,12 +1580,14 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         keyboardScopePopup.autoenablesItems = false
         keyboardScopePopup.selectItem(withTag: options.firstIndex { $0.scope == selectedKeyboardScope } ?? 0)
         keyboardScopePopup.isEnabled = KeyRemapStore.isEnabled
+        identifyKeyboardButton.isEnabled = KeyRemapStore.isEnabled
     }
 
     private func reloadKeyRemapList() {
         for view in keyRemapListStack.arrangedSubviews {
             view.removeFromSuperview()
         }
+        keyRemapRowControls.removeAll()
 
         let remaps = KeyRemapStore.remaps(for: selectedKeyboardScope)
         let sources = Set(remaps.map(\.from))
@@ -1563,12 +1611,17 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         let isEnabled = KeyRemapStore.isEnabled
 
         let sourcePopup = makeKeyPopup(selecting: remap.from, disabling: takenSources, action: #selector(remapSourceChanged(_:)))
+        let sourceCaptureButton = makeKeyCaptureButton(action: #selector(captureSourceKey(_:)))
         let targetPopup = makeKeyPopup(selecting: remap.to, disabling: [], action: #selector(remapTargetChanged(_:)))
+        let targetCaptureButton = makeKeyCaptureButton(action: #selector(captureTargetKey(_:)))
         let arrow = NSTextField(labelWithString: "→")
         // Dims with the pickers either side of it, which grey out on their own.
         arrow.textColor = isEnabled ? .secondaryLabelColor : .tertiaryLabelColor
-        let keys = NSStackView(views: [sourcePopup, arrow, targetPopup])
+        let keys = NSStackView(views: [sourcePopup, sourceCaptureButton, arrow, targetPopup, targetCaptureButton])
         keys.spacing = 8
+        // Each press-to-pick button sits against the picker it fills in.
+        keys.setCustomSpacing(2, after: sourcePopup)
+        keys.setCustomSpacing(2, after: targetPopup)
 
         let removeImage = NSImage(systemSymbolName: "minus.circle.fill", accessibilityDescription: "Remove Mapping") ?? NSImage()
         let removeButton = NSButton(image: removeImage, target: self, action: #selector(removeKeyRemap(_:)))
@@ -1576,11 +1629,24 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         removeButton.contentTintColor = .secondaryLabelColor
 
         // The tag carries the row's index back to the action.
-        for control in [sourcePopup, targetPopup, removeButton] {
+        for control in [sourcePopup, sourceCaptureButton, targetPopup, targetCaptureButton, removeButton] {
             control.tag = index
             control.isEnabled = isEnabled
         }
+        keyRemapRowControls.append(KeyRemapRowControls(
+            sourcePopup: sourcePopup, sourceCaptureButton: sourceCaptureButton,
+            targetPopup: targetPopup, targetCaptureButton: targetCaptureButton
+        ))
         return makeRow(leading: keys, trailing: removeButton)
+    }
+
+    private func makeKeyCaptureButton(action: Selector) -> NSButton {
+        let image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Choose by Pressing the Key") ?? NSImage()
+        let button = NSButton(image: image, target: self, action: action)
+        button.isBordered = false
+        button.contentTintColor = .secondaryLabelColor
+        button.toolTip = "Press the key instead of finding it in the list"
+        return button
     }
 
     /// A picker over every key RemappableKey lists, grouped under headers.
@@ -1646,17 +1712,23 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     }
 
     @objc private func toggleKeyRemap(_ sender: NSSwitch) {
+        endKeyCapture()
         KeyRemapStore.isEnabled = sender.state == .on
         keyRemapsDidChange()
     }
 
     @objc private func keyboardScopeChanged(_ sender: NSPopUpButton) {
-        guard keyboardScopeOptions.indices.contains(sender.selectedTag()) else { return }
-        selectedKeyboardScope = keyboardScopeOptions[sender.selectedTag()].scope
+        // Read before endKeyCapture(), whose refresh rebuilds this picker
+        // around the old selection.
+        let tag = sender.selectedTag()
+        endKeyCapture()
+        guard keyboardScopeOptions.indices.contains(tag) else { return }
+        selectedKeyboardScope = keyboardScopeOptions[tag].scope
         reloadKeyRemapList()
     }
 
     @objc private func addKeyRemap() {
+        endKeyCapture()
         var remaps = KeyRemapStore.remaps(for: selectedKeyboardScope)
         guard let remap = RemappableKey.suggestedRemap(excluding: Set(remaps.map(\.from))) else {
             NSSound.beep()
@@ -1672,11 +1744,16 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         }
     }
 
+    // The listening prompt is the one item with a negative tag; it can't be
+    // picked, but it's guarded against rather than trusted to stay that way.
+
     @objc private func remapSourceChanged(_ sender: NSPopUpButton) {
+        guard sender.selectedTag() >= 0 else { return }
         updateKeyRemap(at: sender.tag) { $0.from = UInt64(sender.selectedTag()) }
     }
 
     @objc private func remapTargetChanged(_ sender: NSPopUpButton) {
+        guard sender.selectedTag() >= 0 else { return }
         updateKeyRemap(at: sender.tag) { $0.to = UInt64(sender.selectedTag()) }
     }
 
@@ -1695,6 +1772,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     }
 
     private func saveKeyRemaps(_ remaps: [KeyRemap]) {
+        // Any edit ends a listen first: the row it was waiting on may be
+        // the one that's moving, and the remaps have to be back in force
+        // before the new ones are applied.
+        endKeyCapture()
         let keyboardName = keyboardScopeOptions.first { $0.scope == selectedKeyboardScope }?.name
         KeyRemapStore.setRemaps(remaps, for: selectedKeyboardScope, keyboardName: keyboardName)
         keyRemapsDidChange()
@@ -1705,6 +1786,133 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private func keyRemapsDidChange() {
         onKeyRemapSettingsChanged?()
         refreshKeyboardPane()
+    }
+
+    // MARK: Picking by pressing
+
+    @objc private func captureSourceKey(_ sender: NSButton) {
+        toggleKeyCapture(.source(row: sender.tag))
+    }
+
+    @objc private func captureTargetKey(_ sender: NSButton) {
+        toggleKeyCapture(.target(row: sender.tag))
+    }
+
+    @objc private func identifyKeyboard() {
+        toggleKeyCapture(.keyboard)
+    }
+
+    /// Starts listening for `target`, or stops if it already was — the
+    /// same button both starts and cancels.
+    private func toggleKeyCapture(_ target: KeyCaptureTarget) {
+        let wasListeningForThis = keyCaptureTarget == target
+        endKeyCapture()
+        guard !wasListeningForThis else { return }
+
+        keyCaptureTarget = target
+        // Picking a keyboard only needs to know where a key came from, not
+        // which key it physically was, so its remaps can stay.
+        if target != .keyboard {
+            setKeyRemapSuspended?(true)
+        }
+        showKeyCapturePrompt()
+        keyCapture.start { [weak self] press in
+            self?.handleCapturedKey(press)
+        }
+    }
+
+    /// Stops listening and puts the pane (and the remaps) back. Safe to
+    /// call when nothing is listening.
+    private func endKeyCapture() {
+        guard let target = keyCaptureTarget else { return }
+        keyCapture.stop()
+        keyCaptureTarget = nil
+        identifyKeyboardButton.title = "Identify"
+        if target != .keyboard {
+            setKeyRemapSuspended?(false)
+        }
+        refreshKeyboardPane()
+    }
+
+    private func handleCapturedKey(_ press: KeyCapture.Press) {
+        guard let target = keyCaptureTarget else { return }
+        let keyboard = keyboardForSenderID?(press.senderID)
+
+        switch target {
+        case .keyboard:
+            endKeyCapture()
+            guard let keyboard else {
+                let alert = NSAlert()
+                alert.messageText = "Couldn’t Tell Which Keyboard That Was"
+                alert.informativeText = "macOS didn’t say which keyboard sent that key. Pick the keyboard from the list instead."
+                alert.runModal()
+                return
+            }
+            // The built-in keyboard is listed only as its own scope.
+            selectedKeyboardScope = keyboard.isBuiltIn ? .builtIn : .keyboard(id: keyboard.id)
+            refreshKeyboardPane()
+
+        case .source(let row), .target(let row):
+            // fn, the keypad and the like aren't in the list: say so and
+            // keep listening for one that is.
+            guard let usage = KeyCapture.hidUsage(of: press.key, onAppleKeyboard: keyboard?.isAppleKeyboard ?? false) else {
+                NSSound.beep()
+                return
+            }
+            let isSource = target == .source(row: row)
+            if isSource {
+                let otherSources = KeyRemapStore.remaps(for: selectedKeyboardScope).enumerated()
+                    .filter { $0.offset != row }.map(\.element.from)
+                // Already remapped on another row, same as the greyed-out
+                // items in the picker.
+                guard !otherSources.contains(usage) else {
+                    NSSound.beep()
+                    return
+                }
+            }
+            updateKeyRemap(at: row) { remap in
+                if isSource {
+                    remap.from = usage
+                } else {
+                    remap.to = usage
+                }
+            }
+        }
+    }
+
+    /// Shows what the pane is listening for: a prompt in place of the
+    /// picker's current choice, and its button lit (or, for Identify,
+    /// turned into Cancel).
+    private func showKeyCapturePrompt() {
+        guard let target = keyCaptureTarget else { return }
+
+        let popup: NSPopUpButton?
+        let prompt: String
+        switch target {
+        case .keyboard:
+            popup = keyboardScopePopup
+            prompt = "Press a key on it…"
+            identifyKeyboardButton.title = "Cancel"
+        case .source(let row):
+            popup = keyRemapRowControls.indices.contains(row) ? keyRemapRowControls[row].sourcePopup : nil
+            prompt = "Press a key…"
+            if keyRemapRowControls.indices.contains(row) {
+                keyRemapRowControls[row].sourceCaptureButton.contentTintColor = .controlAccentColor
+            }
+        case .target(let row):
+            popup = keyRemapRowControls.indices.contains(row) ? keyRemapRowControls[row].targetPopup : nil
+            prompt = "Press a key…"
+            if keyRemapRowControls.indices.contains(row) {
+                keyRemapRowControls[row].targetCaptureButton.contentTintColor = .controlAccentColor
+            }
+        }
+
+        guard let popup, let menu = popup.menu else { return }
+        let item = NSMenuItem(title: prompt, action: nil, keyEquivalent: "")
+        item.tag = -1
+        item.isEnabled = false
+        menu.insertItem(item, at: 0)
+        popup.select(item)
     }
 
     // MARK: - Shortcut recording (trailing control of a Screenshot row)

@@ -1,9 +1,11 @@
 import Foundation
 
 /// A key Tide can remap, identified the way macOS's keyboard driver sees
-/// it: a HID usage on the Keyboard/Keypad page (0x07), packed as
-/// `page << 32 | usage` — the exact number the driver's UserKeyMapping
-/// property takes (see KeyRemapper), so nothing is translated on the way.
+/// it: a HID usage packed as `page << 32 | usage` — the exact number the
+/// driver's UserKeyMapping property takes (see KeyRemapper), so nothing is
+/// translated on the way. Mostly the Keyboard/Keypad page (0x07); media and
+/// volume keys live on the Consumer page (0x0C) instead, and the driver
+/// maps between pages as readily as within one.
 ///
 /// Named by position on a US ANSI keyboard, the way remappers generally
 /// name keys: the driver swaps physical keys before the input source turns
@@ -58,6 +60,20 @@ struct RemappableKey {
             key(0x53, "Num Lock"),
             key(0x64, "Non-US Backslash")
         ]),
+        // Mostly wanted as targets — a keyboard without media keys getting
+        // them on keys it does have — but they work as sources too, on
+        // keyboards that send them as media keys (KeyRemapper also maps a
+        // keyboard's separate media-key service).
+        Group(title: "Media & Volume", keys: [
+            consumerKey(0xCD, "Play/Pause"),
+            consumerKey(0xB6, "Previous Track"),
+            consumerKey(0xB5, "Next Track"),
+            consumerKey(0xE2, "Mute"),
+            consumerKey(0xEA, "Volume Down"),
+            consumerKey(0xE9, "Volume Up"),
+            consumerKey(0x70, "Brightness Down"),
+            consumerKey(0x6F, "Brightness Up")
+        ]),
         // F13–F20 have no key on most keyboards, which is what makes them
         // useful targets: anything remapped to one can be bound as a
         // shortcut without clashing with an existing one. macOS stops
@@ -104,5 +120,10 @@ struct RemappableKey {
         RemappableKey(hidUsage: keyboardPage << 32 | usage, name: name)
     }
 
-    private static let keyboardPage: UInt64 = 0x07
+    private static func consumerKey(_ usage: UInt64, _ name: String) -> RemappableKey {
+        RemappableKey(hidUsage: consumerPage << 32 | usage, name: name)
+    }
+
+    static let keyboardPage: UInt64 = 0x07
+    static let consumerPage: UInt64 = 0x0C
 }

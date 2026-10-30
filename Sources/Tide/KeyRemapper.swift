@@ -30,6 +30,10 @@ final class KeyRemapper {
         let id: String
         let name: String
         let isBuiltIn: Bool
+        let vendorID: Int
+
+        /// Apple's USB vendor ID, or its Bluetooth SIG one.
+        var isAppleKeyboard: Bool { vendorID == 0x05AC || vendorID == 0x004C }
     }
 
     enum Status: Equatable {
@@ -48,6 +52,16 @@ final class KeyRemapper {
     /// been brought up to date, so an open Settings window can refresh its
     /// keyboard list and status line.
     var onKeyboardsChanged: (() -> Void)?
+
+    /// While set, every keyboard is put back to unmapped and stays that way
+    /// — for the Keyboard pane, which needs to see which key was physically
+    /// pressed, not what Tide currently turns it into. Clearing it reapplies.
+    var isSuspended = false {
+        didSet {
+            guard isSuspended != oldValue else { return }
+            apply()
+        }
+    }
 
     /// Services Tide has put a mapping on, by registry ID. Only these are
     /// ever cleared: a mapping someone set with hidutil on a keyboard Tide
@@ -85,7 +99,7 @@ final class KeyRemapper {
     /// written to again.
     @discardableResult
     func apply() -> Status {
-        let isEnabled = KeyRemapStore.isEnabled
+        let isEnabled = KeyRemapStore.isEnabled && !isSuspended
         var stillRemapped: Set<UInt64> = []
         var activeKeyboardIDs: Set<String> = []
         var failedKeyboardName: String?
@@ -115,6 +129,9 @@ final class KeyRemapper {
         // disappeared drop out with their keyboards.
         remappedServiceIDs = stillRemapped
 
+        // A suspension lasts one key press; the status line should go on
+        // describing the settings rather than flash "Off" for it.
+        guard !isSuspended else { return status }
         if !isEnabled {
             status = .off
         } else if let failedKeyboardName {
@@ -157,20 +174,82 @@ final class KeyRemapper {
         let client = IOHIDEventSystemClientCreateSimpleClient(kCFAllocatorDefault)
         guard let services = IOHIDEventSystemClientCopyServices(client) as? [IOHIDServiceClient] else { return [] }
 
-        return services.compactMap { service in
-            guard IOHIDServiceClientConformsTo(service, UInt32(kHIDPage_GenericDesktop), UInt32(kHIDUsage_GD_Keyboard)) != 0,
+        var keyboards: [Service] = []
+        var mediaKeyCandidates: [Service] = []
+        for service in services {
+            let isKeyboard = IOHIDServiceClientConformsTo(service, UInt32(kHIDPage_GenericDesktop), UInt32(kHIDUsage_GD_Keyboard)) != 0
+            let isMediaKeys = !isKeyboard
+                && IOHIDServiceClientConformsTo(service, UInt32(kHIDPage_Consumer), UInt32(kHIDUsage_Csmr_ConsumerControl)) != 0
+            guard isKeyboard || isMediaKeys,
                   let registryID = (IOHIDServiceClientGetRegistryID(service) as? NSNumber)?.uint64Value
-            else { return nil }
+            else { continue }
 
-            let product = (Self.property(service, kIOHIDProductKey) as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let keyboard = Keyboard(
-                id: Self.keyboardID(of: service, registryID: registryID, product: product),
-                name: product.isEmpty ? "Keyboard" : product,
-                isBuiltIn: (Self.property(service, kIOHIDBuiltInKey) as? NSNumber)?.boolValue ?? false
-            )
-            return Service(client: service, registryID: registryID, keyboard: keyboard, eventSystem: client)
+            let entry = Service(client: service, registryID: registryID,
+                                keyboard: Self.describe(service, registryID: registryID), eventSystem: client)
+            if isKeyboard {
+                keyboards.append(entry)
+            } else {
+                mediaKeyCandidates.append(entry)
+            }
         }
+
+        // A keyboard's media and volume keys often arrive through a
+        // Consumer Control service of their own, which has to carry the
+        // same mapping for those keys to work as sources. Only ones that
+        // belong to a keyboard found above, though: audio gear (a USB DAC,
+        // a headset's buttons) has Consumer Control services too, and
+        // isn't a keyboard to list or remap.
+        let keyboardsByID = Dictionary(keyboards.map { ($0.keyboard.id, $0.keyboard) }) { first, _ in first }
+        let mediaKeyServices = mediaKeyCandidates.compactMap { candidate -> Service? in
+            guard let keyboard = keyboardsByID[candidate.keyboard.id] else { return nil }
+            return Service(client: candidate.client, registryID: candidate.registryID, keyboard: keyboard, eventSystem: client)
+        }
+        return keyboards + mediaKeyServices
+    }
+
+    private static func describe(_ service: IOHIDServiceClient, registryID: UInt64) -> Keyboard {
+        let product = (property(service, kIOHIDProductKey) as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return Keyboard(
+            id: keyboardID(of: service, registryID: registryID, product: product),
+            name: product.isEmpty ? "Keyboard" : product,
+            isBuiltIn: (property(service, kIOHIDBuiltInKey) as? NSNumber)?.boolValue ?? false,
+            vendorID: (property(service, kIOHIDVendorIDKey) as? NSNumber)?.intValue ?? 0
+        )
+    }
+
+    /// The keyboard a key event came from, given the event's sender ID
+    /// (CGEvent field 87, the same one ScrollDirectionManager reads). Which
+    /// registry entry that ID names — the HID event service or the device
+    /// beneath it — isn't documented, so both are accepted: the service
+    /// itself, then its providers up the service plane.
+    func keyboard(forSenderID senderID: UInt64) -> Keyboard? {
+        guard senderID != 0 else { return nil }
+        return keyboardServices().first { service in
+            service.registryID == senderID || Self.providerIDs(ofRegistryID: service.registryID).contains(senderID)
+        }?.keyboard
+    }
+
+    /// Registry IDs of an entry's providers, nearest first. A few levels
+    /// covers service → interface → device; beyond that are buses and
+    /// controllers, which no key event names as its sender.
+    private static func providerIDs(ofRegistryID registryID: UInt64) -> [UInt64] {
+        var ids: [UInt64] = []
+        var entry = IOServiceGetMatchingService(kIOMainPortDefault, IORegistryEntryIDMatching(registryID))
+        for _ in 0..<4 where entry != 0 {
+            var parent: io_registry_entry_t = 0
+            let result = IORegistryEntryGetParentEntry(entry, kIOServicePlane, &parent)
+            IOObjectRelease(entry)
+            entry = result == KERN_SUCCESS ? parent : 0
+            var parentID: UInt64 = 0
+            if entry != 0, IORegistryEntryGetRegistryEntryID(entry, &parentID) == KERN_SUCCESS {
+                ids.append(parentID)
+            }
+        }
+        if entry != 0 {
+            IOObjectRelease(entry)
+        }
+        return ids
     }
 
     /// An ID that names the same keyboard every time it connects. The

@@ -67,7 +67,10 @@ Tide giải quyết bằng cách để nguyên setting của hệ thống cho m�
 
 Đổi một phím thành phím khác, ví dụ Caps Lock thành Esc, hay đổi chỗ ⌘ với ⌥ trên bàn phím Windows, mà không ảnh hưởng các bàn phím khác.
 
-- Settings → **Keyboard**: chọn bàn phím ở ô **Keyboard**, bấm **Add Mapping**, rồi chọn phím gốc → phím mới. Danh sách có modifier trái/phải, Esc/Return/Tab/Space/Delete, phím điều hướng, các phím riêng của bàn phím PC (Print Screen, Scroll Lock, Pause, Insert, Menu…), F1–F20, chữ, số và ký hiệu. Tên phím theo vị trí trên bàn phím US.
+- Settings → **Keyboard**: chọn bàn phím ở ô **Keyboard**, bấm **Add Mapping**, rồi chọn phím gốc → phím mới. Danh sách có modifier trái/phải, Esc/Return/Tab/Space/Delete, phím điều hướng, các phím riêng của bàn phím PC (Print Screen, Scroll Lock, Pause, Insert, Menu…), **media và âm lượng** (Play/Pause, Previous/Next Track, Mute, Volume Down/Up, Brightness Down/Up), F1–F20, chữ, số và ký hiệu. Tên phím theo vị trí trên bàn phím US.
+- **Bấm phím thay vì tìm trong danh sách:** nút ⌨ cạnh mỗi ô chọn phím, bấm vào rồi bấm phím thật (bấm lại nút để huỷ). Trong lúc chờ, Tide tạm gỡ mapping của chính nó, nên phím đã đổi vẫn được nhận đúng là phím vật lý (Caps Lock đang thành Esc vẫn ra Caps Lock). macOS báo Print Screen/Scroll Lock/Pause với cùng mã như F13/F14/F15, nên Tide chọn theo hãng bàn phím: bàn phím Apple ra F13–F15, bàn phím khác ra Print Screen/Scroll Lock/Pause.
+- **Identify:** bấm rồi gõ một phím bất kỳ trên bàn phím muốn chọn, ô **Keyboard** sẽ nhảy tới đúng bàn phím đó — tiện khi tên bàn phím khó nhận ra hoặc có hai cái cùng mẫu.
+- Phím media/âm lượng chủ yếu để làm **phím đích** (gán Volume Up cho một phím bàn phím đang có). Làm phím gốc cũng được với bàn phím gửi chúng như phím media thật; Tide áp mapping lên cả service media (Consumer Control) riêng của bàn phím, nhưng không đụng tới các thiết bị âm thanh như DAC hay tai nghe.
 - Chọn được **All Keyboards**, **Built-in Keyboard** (chỉ hiện khi máy có), **External Keyboards**, hoặc **một bàn phím cụ thể**. Cùng một phím bị đổi ở nhiều chỗ thì chỗ hẹp hơn thắng: bàn phím cụ thể > Built-in/External > All Keyboards. Bàn phím đã có mapping mà đang không kết nối vẫn nằm trong danh sách (nhóm *Not Connected*) để xem hoặc xoá.
 - Nhận ra lại đúng bàn phím mỗi lần kết nối bằng `PhysicalDeviceUniqueID` (bàn phím Bluetooth) hoặc số serial; không có thì theo VendorID + ProductID + tên, nên hai bàn phím giống hệt nhau và không có serial sẽ dùng chung mapping. Không dựa riêng vào VendorID/ProductID vì nhiều bàn phím Bluetooth LE báo cả hai bằng 0.
 - Đổi phím ngay trong driver bàn phím của macOS (thuộc tính `UserKeyMapping`, cùng cơ chế với `hidutil`), nên **không cần quyền gì**, chạy được cả trong ô mật khẩu (nơi Secure Input chặn mọi event tap), và modifier sau khi đổi hoạt động y như modifier thật. Đổi lại chỉ làm được phím → phím, không phải tổ hợp phím.
@@ -100,7 +103,7 @@ Dạng sidebar-tabs giống System Settings, chia theo chức năng. Mỗi nhóm
 
 ![Pane Scrolling](docs/pane-scrolling.png)
 
-**Keyboard** — công tắc **Remap Keys**, ô chọn bàn phím (kèm số mapping của từng mục), danh sách mapping (mỗi dòng: phím gốc → phím mới, nút ⊖ để xoá) và dòng trạng thái cạnh nút **Add Mapping**. Đổi gì áp dụng ngay. Pane này không có Restore Defaults: xoá từng dòng, hoặc tắt Remap Keys để tạm ngưng tất cả.
+**Keyboard** — công tắc **Remap Keys**, ô chọn bàn phím (kèm số mapping của từng mục) với nút **Identify**, danh sách mapping (mỗi dòng: phím gốc → phím mới, mỗi bên có nút ⌨ để chọn bằng cách bấm phím, nút ⊖ để xoá) và dòng trạng thái cạnh nút **Add Mapping**. Đổi gì áp dụng ngay. Pane này không có Restore Defaults: xoá từng dòng, hoặc tắt Remap Keys để tạm ngưng tất cả.
 
 ## Cài đặt
 

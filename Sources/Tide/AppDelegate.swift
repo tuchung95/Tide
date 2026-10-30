@@ -632,6 +632,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.connectedKeyboards = { [weak self] in
             self?.keyRemapper.connectedKeyboards ?? []
         }
+        controller.keyboardForSenderID = { [weak self] senderID in
+            self?.keyRemapper.keyboard(forSenderID: senderID)
+        }
+        controller.setKeyRemapSuspended = { [weak self] isSuspended in
+            self?.keyRemapper.isSuspended = isSuspended
+        }
         controller.onWindowClose = {
             // Back to menu-bar-only once Settings is gone — but only on
             // the next run loop pass: windowWillClose fires while the
