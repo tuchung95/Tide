@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let networkMonitor = NetworkMonitor()
     private let scrollDirectionManager = ScrollDirectionManager()
     private let keyRemapper = KeyRemapper()
+    private let copySoundManager = CopySoundManager()
     private let displayController = DisplayController()
     private lazy var volumeKeyManager = MonitorVolumeKeyManager(displayController: displayController)
     private let volumeHUD = VolumeHUD()
@@ -73,6 +74,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         keyRemapper.start()
         updateLockScreenHotKey()
+
+        // Silent at launch, like the other taps.
+        copySoundManager.onStarted = { [weak self] in
+            self?.settingsWindowController?.refreshCopySoundStatus()
+        }
+        copySoundManager.onTapCreationFailedWhileTrusted = { [weak self] in
+            self?.offerRelaunchForAccessibility()
+        }
+        copySoundManager.apply()
 
         // Discovery talks to the monitors over DDC, which is slow, so it
         // runs in the background and calls back once it knows what's out
@@ -222,6 +232,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let alert = NSAlert()
         alert.messageText = "Accessibility Permission Needed"
         alert.informativeText = "Tide needs Accessibility access to catch the volume keys before macOS does.\n\nEnable Tide in System Settings > Privacy & Security > Accessibility. The keys start working as soon as it's granted — no restart needed."
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Later")
+        if alert.runModal() == .alertFirstButtonReturn,
+           let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Called after the copy sound setting changes. Same shape as
+    /// applyVolumeKeySettingsChange.
+    private func applyCopySoundSettingsChange() {
+        guard copySoundManager.apply() == .needsAccessibility else { return }
+        guard !copySoundManager.requestAccessibilityPermission() else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Accessibility Permission Needed"
+        alert.informativeText = "Tide needs Accessibility access to hear ⌘C in other apps.\n\nEnable Tide in System Settings > Privacy & Security > Accessibility. The sound starts as soon as it's granted — no restart needed."
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Later")
         if alert.runModal() == .alertFirstButtonReturn,
@@ -627,6 +654,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller.isVolumeKeyTapActive = { [weak self] in
             self?.volumeKeyManager.isRunning ?? false
         }
+        controller.onCopySoundSettingsChanged = { [weak self] in
+            self?.applyCopySoundSettingsChange()
+        }
+        controller.isCopySoundActive = { [weak self] in
+            self?.copySoundManager.isRunning ?? false
+        }
         controller.onKeyRemapSettingsChanged = { [weak self] in
             self?.keyRemapper.apply()
             self?.updateLockScreenHotKey()
@@ -665,6 +698,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // was last open.
         controller.refreshScrollStatus()
         controller.refreshVolumeKeyStatus()
+        controller.refreshCopySoundStatus()
         controller.refreshKeyboardPane()
         // The app is LSUIElement, so it normally has no Dock icon and no
         // menu bar at all. While Settings is open it becomes a regular

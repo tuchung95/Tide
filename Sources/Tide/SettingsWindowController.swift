@@ -45,6 +45,15 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     /// working.
     var isVolumeKeyTapActive: (() -> Bool)?
 
+    /// Triggered after the copy sound setting changes, so the app delegate
+    /// can install/remove its key tap (and ask for Accessibility the first
+    /// time) right away.
+    var onCopySoundSettingsChanged: (() -> Void)?
+
+    /// Whether the copy sound's key tap is actually installed — same
+    /// reasoning as isScrollReversingActive.
+    var isCopySoundActive: (() -> Bool)?
+
     /// Triggered after any key remap changes, so the app delegate can
     /// push the new mappings to the keyboards right away.
     var onKeyRemapSettingsChanged: (() -> Void)?
@@ -170,6 +179,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private var saveSwitches: [ShortcutAction: NSButton] = [:]
     private var copySwitches: [ShortcutAction: NSButton] = [:]
     private var launchAtLoginSwitch: NSSwitch!
+    private var copySoundSwitch: NSSwitch!
+    private var copySoundPopup: NSPopUpButton!
+    private var copySoundStatusDot: NSBox!
+    private var copySoundStatusLabel: NSTextField!
     private var speedMeterEnabledSwitch: NSSwitch!
     private var showUploadSwitch: NSSwitch!
     private var showDownloadSwitch: NSSwitch!
@@ -971,6 +984,42 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         card.widthAnchor.constraint(equalToConstant: Self.paneCardWidth).isActive = true
         stack.addArrangedSubview(card)
 
+        copySoundSwitch = makeSwitch(isOn: CopySoundSettingsStore.isEnabled, action: #selector(toggleCopySound(_:)))
+        let copySoundRow = makeRow(leading: NSTextField(labelWithString: "Play Sound When Copying (⌘C)"), trailing: copySoundSwitch)
+
+        copySoundPopup = NSPopUpButton()
+        copySoundPopup.addItems(withTitles: CopySoundManager.availableSoundNames)
+        copySoundPopup.selectItem(withTitle: CopySoundSettingsStore.soundName)
+        if copySoundPopup.indexOfSelectedItem < 0 {
+            copySoundPopup.selectItem(withTitle: CopySoundSettingsStore.defaultSoundName)
+        }
+        copySoundPopup.target = self
+        copySoundPopup.action = #selector(copySoundChanged(_:))
+        let soundRow = makeRow(leading: NSTextField(labelWithString: "Sound"), trailing: copySoundPopup)
+
+        let copySoundCard = makeCard(rows: [copySoundRow, soundRow])
+        copySoundCard.widthAnchor.constraint(equalToConstant: Self.paneCardWidth).isActive = true
+        stack.addArrangedSubview(copySoundCard)
+
+        let copySoundCaption = NSTextField(wrappingLabelWithString: "Plays only when ⌘C actually copies something, so pressing it with nothing selected stays silent. Requires Accessibility permission.")
+        copySoundCaption.font = NSFont.systemFont(ofSize: 11)
+        copySoundCaption.textColor = .secondaryLabelColor
+
+        copySoundStatusLabel = NSTextField(wrappingLabelWithString: "")
+        copySoundStatusLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        copySoundStatusDot = makeStatusDot()
+        // Same two-row notes card as Scrolling and Display: the live status,
+        // then the copy describing the setting.
+        let copySoundNotesCard = makeCard(rows: [
+            makeTextRow(labels: [makeStatusRow(dot: copySoundStatusDot, label: copySoundStatusLabel)]),
+            makeTextRow(labels: [copySoundCaption])
+        ])
+        copySoundNotesCard.widthAnchor.constraint(equalToConstant: Self.paneCardWidth).isActive = true
+        stack.addArrangedSubview(copySoundNotesCard)
+
+        updateCopySoundPopupAvailability()
+        refreshCopySoundStatus()
+
         let creditLabel = NSTextField(labelWithString: "Created by Louis Chung")
         creditLabel.font = NSFont.systemFont(ofSize: 11)
         creditLabel.textColor = .tertiaryLabelColor
@@ -981,6 +1030,43 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     @objc private func toggleLaunchAtLogin(_ sender: NSSwitch) {
         LoginItemManager.isEnabled = sender.state == .on
+    }
+
+    @objc private func toggleCopySound(_ sender: NSSwitch) {
+        CopySoundSettingsStore.isEnabled = sender.state == .on
+        updateCopySoundPopupAvailability()
+        onCopySoundSettingsChanged?()
+        refreshCopySoundStatus()
+    }
+
+    /// Plays the newly picked sound, so choosing one doesn't mean going off
+    /// to copy something just to hear it.
+    @objc private func copySoundChanged(_ sender: NSPopUpButton) {
+        guard let name = sender.titleOfSelectedItem else { return }
+        CopySoundSettingsStore.soundName = name
+        CopySoundManager.play(soundNamed: name)
+    }
+
+    /// The sound only means anything while the switch is on, so it dims
+    /// with it — like Scrolling's per-device switches.
+    private func updateCopySoundPopupAvailability() {
+        copySoundPopup.isEnabled = CopySoundSettingsStore.isEnabled
+    }
+
+    /// Reads live state every time: Accessibility can be granted (or
+    /// revoked) in System Settings while this window sits open.
+    func refreshCopySoundStatus() {
+        guard copySoundStatusLabel != nil else { return }
+        if !CopySoundSettingsStore.isEnabled {
+            applyStatus(dot: copySoundStatusDot, label: copySoundStatusLabel, "Off", .secondaryLabelColor)
+        } else if isCopySoundActive?() == true {
+            applyStatus(dot: copySoundStatusDot, label: copySoundStatusLabel,
+                        "Active — listening for ⌘C.", .systemGreen)
+        } else {
+            applyStatus(dot: copySoundStatusDot, label: copySoundStatusLabel,
+                        "Waiting for Accessibility permission. If Tide already looks enabled in System Settings, switch it off and on again.",
+                        .systemOrange)
+        }
     }
 
     // MARK: - Display pane

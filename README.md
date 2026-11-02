@@ -78,6 +78,12 @@ Tide giải quyết bằng cách để nguyên setting của hệ thống cho m�
 - Không đè lên **Modifier Keys** trong System Settings → Keyboard: macOS lưu cái đó ở một thuộc tính khác.
 - Mapping mất khi bàn phím ngắt kết nối (Bluetooth sau khi máy ngủ, USB rút ra cắm lại), nên Tide theo dõi và tự áp lại. Thoát Tide thì mọi phím trở lại bình thường.
 
+### Âm thanh khi copy
+
+- Bật **Play Sound When Copying (⌘C)** trong Settings → General: mỗi lần ⌘C copy được thứ gì đó, Tide phát một âm thanh ngắn. Chọn âm ở ô **Sound** (các âm cảnh báo có sẵn của macOS, mặc định *Pop*); chọn là nghe thử luôn.
+- Chỉ kêu khi clipboard **thật sự thay đổi** trong ~0,5 giây sau ⌘C, nên bấm ⌘C mà không chọn gì thì im lặng. ⌘⇧C, ⌥⌘C, ⌃⌘C và ⌘C lặp lại do giữ phím không tính. Nhận ⌘C theo ký tự chứ không theo vị trí phím, nên đúng cả với layout Dvorak.
+- Tide chỉ nghe phím, không chặn hay sửa phím nào. Cần quyền **Accessibility** (dùng chung với đảo hướng cuộn và phím âm lượng).
+
 ### Khác
 
 - **Launch at Login** — tự khởi động cùng macOS (chỉ hoạt động khi chạy từ bản `.app` đã đóng gói).
@@ -87,6 +93,8 @@ Tide giải quyết bằng cách để nguyên setting của hệ thống cho m�
 ## Cửa sổ Settings
 
 Dạng sidebar-tabs giống System Settings, chia theo chức năng. Mỗi nhóm có nút **Restore Defaults** riêng, không ảnh hưởng các nhóm khác.
+
+**General** — Launch at Login, phiên bản và **Check for Updates…**, cùng công tắc âm thanh khi copy (kèm ô chọn âm và dòng trạng thái cho biết đang chạy hay còn chờ quyền).
 
 **Screenshot** — mỗi chức năng một dòng, gồm đủ 2 checkbox Save/Copy (không cho tắt cả hai cùng lúc) và ô phím tắt của chính nó: bấm vào ô để ghi tổ hợp mới, Esc để huỷ, Delete để xoá.
 
@@ -119,7 +127,7 @@ Yêu cầu macOS 13 (Ventura) trở lên.
 | Quyền | Dùng cho | Khi nào hỏi |
 |---|---|---|
 | **Screen Recording** | Chụp ảnh màn hình | Lần chụp đầu tiên |
-| **Accessibility** | Đảo hướng cuộn theo thiết bị; bắt phím âm lượng cho loa màn hình | Khi bật Reverse Scroll Direction hoặc Volume Keys Control Monitor Speakers |
+| **Accessibility** | Đảo hướng cuộn theo thiết bị; bắt phím âm lượng cho loa màn hình; nghe ⌘C để phát âm thanh khi copy | Khi bật Reverse Scroll Direction, Volume Keys Control Monitor Speakers hoặc Play Sound When Copying |
 
 Đổi phím (pane Keyboard) không cần quyền nào.
 
